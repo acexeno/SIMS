@@ -1,9 +1,15 @@
 <?php
 require_once __DIR__ . '/../config/cors.php';
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../config/security.php';
+
 // Ensure application timezone is set (default to Philippines)
 $appTz = env('APP_TIMEZONE', 'Asia/Manila');
 @date_default_timezone_set($appTz);
+
+// Set security headers
+setSecurityHeaders();
+
 // main API router for SIMS
 
 // all other requests will continue from here

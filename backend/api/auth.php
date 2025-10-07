@@ -93,6 +93,14 @@ function handleRegister($pdo) {
         return;
     }
     
+    // Validate password strength
+    $passwordErrors = validatePasswordStrength($input['password']);
+    if (!empty($passwordErrors)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Password does not meet requirements', 'details' => $passwordErrors]);
+        return;
+    }
+    
     // hash the password for security
     $passwordHash = password_hash($input['password'], PASSWORD_DEFAULT);
     
@@ -154,6 +162,24 @@ function handleLogin($pdo) {
         return;
     }
     
+    $username = sanitizeInput($input['username'], 'string');
+    $password = $input['password'];
+    $ipAddress = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    
+    // Check if IP is blocked
+    if (isIPBlocked($pdo, $ipAddress)) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Access denied. IP address is blocked.']);
+        return;
+    }
+    
+    // Check rate limiting
+    if (!checkLoginRateLimit($pdo, $username, (int)env('LOGIN_MAX_ATTEMPTS', 5), (int)env('LOGIN_LOCKOUT_TIME', 900))) {
+        http_response_code(429);
+        echo json_encode(['error' => 'Too many login attempts. Please try again later.']);
+        return;
+    }
+    
     // get user info along with their roles
     $stmt = $pdo->prepare("
         SELECT u.*, GROUP_CONCAT(r.name) as roles
@@ -163,20 +189,36 @@ function handleLogin($pdo) {
         WHERE u.username = ? OR u.email = ?
         GROUP BY u.id
     ");
-    $stmt->execute([$input['username'], $input['username']]);
+    $stmt->execute([$username, $username]);
     $user = $stmt->fetch();
     
-    if (!$user || !password_verify($input['password'], $user['password_hash'])) {
+    $loginSuccess = false;
+    
+    if ($user && password_verify($password, $user['password_hash'])) {
+        if ($user['is_active']) {
+            $loginSuccess = true;
+        } else {
+            // Record failed attempt for inactive account
+            recordLoginAttempt($pdo, $username, $ipAddress, false);
+            logSecurityEvent($pdo, 'login_failed_inactive', "Attempted login to inactive account: $username", $user['id'], $ipAddress);
+            http_response_code(403);
+            echo json_encode(['error' => 'Account is deactivated']);
+            return;
+        }
+    }
+    
+    // Record login attempt
+    recordLoginAttempt($pdo, $username, $ipAddress, $loginSuccess);
+    
+    if (!$loginSuccess) {
+        logSecurityEvent($pdo, 'login_failed', "Failed login attempt for: $username", null, $ipAddress);
         http_response_code(401);
         echo json_encode(['error' => 'Invalid username or password']);
         return;
     }
     
-    if (!$user['is_active']) {
-        http_response_code(403);
-        echo json_encode(['error' => 'Account is deactivated']);
-        return;
-    }
+    // Log successful login
+    logSecurityEvent($pdo, 'login_success', "Successful login for: $username", $user['id'], $ipAddress);
     
     // Update last login
     $stmt = $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
