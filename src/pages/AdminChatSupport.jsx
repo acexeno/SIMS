@@ -67,7 +67,7 @@ const AdminChatSupport = ({ user }) => {
     };
     return (
       <span className={`inline-block ${colors[priority] || colors.normal} px-2 py-0.5 rounded-full text-xs font-semibold`}>
-        {priority?.toUpperCase() || 'NORMAL'}
+        {priority ? priority.charAt(0).toUpperCase() + priority.slice(1) : 'Normal'}
       </span>
     );
   };
@@ -357,7 +357,7 @@ const AdminChatSupport = ({ user }) => {
       <div className="w-1/3 min-w-[350px] max-w-sm border-r bg-white flex flex-col shadow-lg h-full">
         {/* Header with stats toggle */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
-          <h2 className="text-xl font-bold text-gray-800">Chat Support</h2>
+          <h2 className="page-title">Chat Support</h2>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowStats(!showStats)}
@@ -510,7 +510,12 @@ const AdminChatSupport = ({ user }) => {
                     ? (<><User2 className="inline w-6 h-6 text-gray-400" title="Guest" />{selectedChat.guest_name || 'Guest'}</>)
                     : (<><UserCheck className="inline w-6 h-6 text-green-500" title="Registered User" />{selectedChat.username || `User #${selectedChat.user_id}`}</>)}
                   {getRoleBadge(user?.roles || [])}
-                  {getStatusBadge(user?.is_active)}
+                  {/* Show chat session status instead of account status */}
+                  <span className={`inline-block ${selectedChat.status === 'resolved' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'} px-2 py-0.5 rounded-full text-xs font-semibold`}>
+                    {selectedChat.status === 'resolved' ? 'Resolved' : 'Open'}
+                  </span>
+                  {/* Only show account status if explicitly provided as boolean */}
+                  {typeof user?.is_active === 'boolean' && getStatusBadge(!!user.is_active)}
                   {getPriorityBadge(selectedChat.priority)}
                 </div>
                 <div className="text-sm text-gray-500 mb-1">{selectedChat.guest_email || ''}</div>

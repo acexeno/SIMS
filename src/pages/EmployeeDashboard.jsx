@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/apiBase'
+import { authorizedFetch } from '../utils/auth'
 import { 
   BarChart3, 
   Package, 
@@ -12,11 +13,11 @@ import {
   Eye,
   AlertTriangle,
   TrendingUp,
-  DollarSign,
   Monitor,
   FileText
 } from 'lucide-react'
 import { ResponsiveContainer, LineChart, Line, BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
+import { formatCurrencyPHP } from '../utils/currency';
 import { getComponentImage } from '../utils/componentImages';
 // EmployeeSidebar is now handled by App.jsx, so we don't need to import it here
 import AdminPCAssembly from './AdminPCAssembly';
@@ -28,6 +29,21 @@ import NotificationToast from '../components/NotificationToast';
 import PCAssembly from './PCAssembly.jsx';
 import AdminReports from '../components/AdminReports';
 import SystemReports from '../components/SystemReports';
+
+// Helper: check JWT expiry (base64url safe)
+function isTokenExpired(token) {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return true;
+    let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const payload = JSON.parse(atob(b64));
+    if (!payload.exp) return false;
+    return Date.now() >= payload.exp * 1000;
+  } catch {
+    return true;
+  }
+}
 
 const formalCategoryNames = {
   "Aio": "CPU Cooler (AIO)",
@@ -69,6 +85,8 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedBrand, setSelectedBrand] = useState('all');
   const [sortBy, setSortBy] = useState('name');
+  // Branch filter: null = All (global), or 'BULACAN' / 'MARIKINA'
+  const [branch, setBranch] = useState(null);
   const { unreadCount, notifications, markAsRead } = useNotifications();
   const [showToast, setShowToast] = useState(true);
   const [initialInventoryAccess, setInitialInventoryAccess] = useState(user?.can_access_inventory);
@@ -81,7 +99,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
       setError(null);
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=dashboard`, {
+        const response = await fetch(`${API_BASE}/index.php?endpoint=dashboard${branch ? `&branch=${branch}` : ''}` , {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -110,7 +128,9 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
       }
     };
     fetchData();
-  }, []);
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, [branch]);
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -250,7 +270,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Sales This Month</p>
-                <p className="text-2xl font-bold text-gray-900">₱{Number(totalSales).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+                <p className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(totalSales)}</p>
               </div>
             </div>
           </div>
@@ -264,10 +284,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                 <div>
                   <p className="text-2xl font-bold text-gray-900">{deadstockCount}</p>
                   <p className="text-sm text-gray-600">
-                    Total: ₱{reports?.deadstock_total_value?.toLocaleString('en-US', { 
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2 
-                    }) || '0.00'}
+                    Total: {formatCurrencyPHP(reports?.deadstock_total_value || 0)}
                   </p>
                 </div>
               </div>
@@ -304,31 +321,31 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
           </div>
         </div>
         {/* Sales Chart */}
-        <div className="bg-white rounded-2xl shadow-lg border p-6 mb-8">
+        <div className="card p-6 mb-8">
           <h4 className="text-lg font-semibold text-gray-900 mb-4">{dashboardSalesChartTitle}</h4>
           {dashboardSalesChartComponent}
         </div>
         {/* Recent Orders */}
-        <div className="bg-white rounded-2xl shadow-lg border p-6">
+        <div className="card p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Orders</h3>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="table-ui">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer ID</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                  <th>Order ID</th>
+                  <th>Customer ID</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th>Date</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody>
                 {(orders && orders.length > 0) ? orders.slice(0, 5).map((order) => (
                   <tr key={order.id}>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
-                    <td className="px-4 py-2 whitespace-nowrap">
+                    <td className="whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
+                    <td className="whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
+                    <td className="whitespace-nowrap text-sm text-gray-900">{formatCurrencyPHP(order.total_price)}</td>
+                    <td className="whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                         order.status === 'Completed' ? 'bg-green-100 text-green-800' :
                         order.status === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
@@ -337,7 +354,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                         {order.status}
                       </span>
                     </td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
+                    <td className="whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
                   </tr>
                 )) : <tr><td colSpan="5" className="text-center py-4">No order data available.</td></tr>}
               </tbody>
@@ -352,7 +369,30 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const InventoryTab = () => (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Inventory Management</h2>
+        <h2 className="page-title">Inventory Management</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Branch:</span>
+          <div className="inline-flex rounded-lg border overflow-hidden">
+            <button
+              className={`px-3 py-1 text-sm ${branch === null ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              onClick={() => setBranch(null)}
+            >
+              All
+            </button>
+            <button
+              className={`px-3 py-1 text-sm border-l ${branch === 'BULACAN' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              onClick={() => setBranch('BULACAN')}
+            >
+              Bulacan
+            </button>
+            <button
+              className={`px-3 py-1 text-sm border-l ${branch === 'MARIKINA' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              onClick={() => setBranch('MARIKINA')}
+            >
+              Marikina
+            </button>
+          </div>
+        </div>
         {/* Employee should NOT create or delete products per requirements; only view and modify.
             Show Add button only if user is admin or superadmin. */}
         {(user?.role === 'admin' || user?.role === 'superadmin') && (
@@ -445,7 +485,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                   </td>
                   <td className="w-1/6 px-2 py-4 whitespace-nowrap text-sm text-gray-900 truncate max-w-xs" title={displayCat}>{displayCat}</td>
                   <td className="w-1/6 px-2 py-4 whitespace-nowrap text-sm text-gray-900 truncate max-w-[80px]" title={item.brand}>{item.brand}</td>
-                  <td className="w-1/12 px-2 py-4 whitespace-nowrap text-sm text-gray-900 max-w-[80px]">₱{item.price}</td>
+                  <td className="w-1/12 px-2 py-4 whitespace-nowrap text-sm text-gray-900 max-w-[80px]">{formatCurrencyPHP(item.price)}</td>
                   <td className="w-1/12 px-2 py-4 whitespace-nowrap text-sm text-gray-900">{item.stock_quantity || item.stock}</td>
                   <td className="w-1/12 px-2 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                     <button
@@ -576,7 +616,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const OrdersTab = () => (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Orders Management</h2>
+        <h2 className="page-title">Orders Management</h2>
         <button className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg">
           <Plus className="h-4 w-4" />
           Add Order
@@ -599,7 +639,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
               <tr key={order.id}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrencyPHP(order.total_price)}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                     order.status === 'Completed' ? 'bg-green-100 text-green-800' :
@@ -694,28 +734,24 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   useEffect(() => {
     // Fetch the latest user profile on every tab change
     const fetchProfile = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-      const res = await fetch(`${API_BASE}/index.php?endpoint=profile`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.success && data.user) {
-        if (setUser) setUser(data.user);
-      }
+      try {
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { method: 'GET' });
+        if (res.status === 401) return;
+        const data = await res.json().catch(() => ({}));
+        if (data.success && data.user) {
+          if (setUser) setUser(data.user);
+        }
+      } catch {}
     };
     fetchProfile();
-  }, [activeTab]);
+  }, [activeTab, setUser]);
 
   useEffect(() => {
     const interval = setInterval(async () => {
-      const token = localStorage.getItem('token');
-      if (!token) return;
       try {
-        const res = await fetch(`${API_BASE}/index.php?endpoint=profile`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { method: 'GET' });
+        if (res.status === 401) return;
+        const data = await res.json().catch(() => ({}));
         if (data.success && data.user) {
           if (typeof initialInventoryAccess !== 'undefined' && data.user.can_access_inventory !== initialInventoryAccess) {
             window.location.reload();
@@ -803,6 +839,8 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     category_id: item.category_id || (categories[0] && categories[0].id) || ''
   });
   const [saving, setSaving] = React.useState(false);
+  const [branchStocks, setBranchStocks] = React.useState({ BULACAN: '', MARIKINA: '' });
+  const [loadingBranch, setLoadingBranch] = React.useState(false);
 
   const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
@@ -819,11 +857,33 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
         body: JSON.stringify(form)
       });
       const result = await res.json();
-      if (result.success) {
-        onSave(result.data || form);
-      } else {
+      if (!result.success) {
         alert(result.error || 'Save failed');
+        setSaving(false);
+        return;
       }
+      // Update per-branch stocks if provided
+      let saved = result.data || { ...form, id: form.id || (result.data && result.data.id) };
+      const compId = saved.id || form.id;
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+      const toInt = v => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10);
+      const bul = toInt(branchStocks.BULACAN);
+      const mar = toInt(branchStocks.MARIKINA);
+      const calls = [];
+      if (compId) {
+        if (bul !== null && !Number.isNaN(bul)) {
+          calls.push(fetch(`${API_BASE}/update_component_stock.php`, { method: 'POST', headers, body: JSON.stringify({ component_id: compId, branch: 'BULACAN', stock_quantity: bul }) }));
+        }
+        if (mar !== null && !Number.isNaN(mar)) {
+          calls.push(fetch(`${API_BASE}/update_component_stock.php`, { method: 'POST', headers, body: JSON.stringify({ component_id: compId, branch: 'MARIKINA', stock_quantity: mar }) }));
+        }
+      }
+      if (calls.length) {
+        await Promise.allSettled(calls);
+        const total = (Number.isFinite(bul) ? bul : 0) + (Number.isFinite(mar) ? mar : 0);
+        saved = { ...saved, stock_quantity: total };
+      }
+      onSave(saved);
     } catch (err) {
       console.error(err);
       alert('Error saving item');
@@ -852,6 +912,18 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
           <input type="number" value={form.stock_quantity} onChange={e => handleChange('stock_quantity', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
         </div>
       </div>
+      {form.id && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Bulacan Stock</label>
+            <input type="number" value={branchStocks.BULACAN} onChange={e => setBranchStocks(s => ({ ...s, BULACAN: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" disabled={loadingBranch} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Marikina Stock</label>
+            <input type="number" value={branchStocks.MARIKINA} onChange={e => setBranchStocks(s => ({ ...s, MARIKINA: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" disabled={loadingBranch} />
+          </div>
+        </div>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-700">Category</label>
         <select value={form.category_id} onChange={e => handleChange('category_id', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2">

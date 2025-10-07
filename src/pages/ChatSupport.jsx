@@ -3,6 +3,12 @@ import { Send, MessageSquare, User, Trash2 } from 'lucide-react';
 import { API_BASE } from '../utils/apiBase';
 const CHAT_BASE = `${API_BASE}/chat.php`;
 
+// Helper function to get auth headers (mirrors Admin/Employee chat pages)
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('token');
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+};
+
 const ChatSupport = ({ user, customStyles = {} }) => {
   // State declarations and hooks
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('builditpc_chat_session_id') || null);
@@ -17,6 +23,7 @@ const ChatSupport = ({ user, customStyles = {} }) => {
   const messagesEndRef = useRef(null);
   const [tempGuestName, setTempGuestName] = useState('');
   const [tempGuestEmail, setTempGuestEmail] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Update last seen timestamp when chat is opened
   const updateLastSeen = async () => {
@@ -127,7 +134,7 @@ const ChatSupport = ({ user, customStyles = {} }) => {
         return;
       }
       
-      const res = await fetch(`${API_BASE}?send`, {
+      const res = await fetch(`${CHAT_BASE}?send`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

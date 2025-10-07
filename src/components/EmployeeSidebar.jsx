@@ -1,12 +1,19 @@
 import React from 'react';
-import { BarChart3, Package, TrendingUp, FileText, Cpu, Monitor, Bell, MessageSquare, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BarChart3, Package, FileText, Cpu, Monitor, Bell, MessageSquare, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const EmployeeSidebar = ({ currentPage, onPageChange, user, onLogout, isCollapsed, onToggleCollapse }) => {
 
-  // handle user logout with confirmation
-  const handleLogout = () => {
-    if (window.confirm('Are you sure you want to logout?')) {
+  // handle user logout with confirmation (robust across browsers)
+  const handleLogout = (e) => {
+    try { e && e.preventDefault && e.preventDefault(); } catch {}
+    const ok = typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
+    if (!ok) return;
+    if (typeof onLogout === 'function') {
       onLogout();
+    } else {
+      try { localStorage.removeItem('token'); } catch {}
+      try { sessionStorage && sessionStorage.clear && sessionStorage.clear(); } catch {}
+      try { window.location.reload(); } catch {}
     }
   };
 
@@ -78,11 +85,12 @@ const EmployeeSidebar = ({ currentPage, onPageChange, user, onLogout, isCollapse
         transition-[width] duration-300 ease-in-out
       `}>
         {/* Collapse toggle */}
-        <div className="absolute top-4 right-4 z-50">
+        <div className={`absolute ${isCollapsed ? 'top-1/2 -translate-y-1/2' : 'top-4'} right-2 lg:right-3 z-50 transition-all`}>
           <button
             onClick={onToggleCollapse}
             className="bg-white p-2 rounded-md shadow-lg border"
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
           </button>
@@ -174,7 +182,9 @@ const EmployeeSidebar = ({ currentPage, onPageChange, user, onLogout, isCollapse
         {/* logout button */}
         <div className="p-3 lg:p-4 border-t border-gray-200">
           <button
+            type="button"
             onClick={handleLogout}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleLogout(e); }}
             className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-center gap-2'} px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg font-semibold transition-colors duration-200`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

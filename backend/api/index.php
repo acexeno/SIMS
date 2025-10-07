@@ -1,12 +1,67 @@
 <?php
 require_once __DIR__ . '/../config/cors.php';
+require_once __DIR__ . '/../config/env.php';
+// Ensure application timezone is set (default to Philippines)
+$appTz = env('APP_TIMEZONE', 'Asia/Manila');
+@date_default_timezone_set($appTz);
 // main API router for SIMS
 
 // all other requests will continue from here
 
 // basic error reporting and exception handling
-error_reporting(E_ALL);
-ini_set('display_errors', 1); // turn this off in production
+// Control error visibility via APP_DEBUG env var
+$appDebug = env('APP_DEBUG', '0');
+if ($appDebug === '1' || strtolower($appDebug) === 'true') {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+} else {
+    error_reporting(E_ALL & ~E_NOTICE & ~E_STRICT & ~E_DEPRECATED);
+    ini_set('display_errors', '0');
+}
+
+// --- Component stock per-branch (Admin/Super Admin only) ---
+function handleGetComponentStock($pdo) {
+    requireAdminOrSuperAdmin();
+    $componentId = isset($_GET['component_id']) ? (int)$_GET['component_id'] : 0;
+    if ($componentId <= 0) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Invalid component_id']);
+        return;
+    }
+    try {
+        // Fetch total from components
+        $stmt = $pdo->prepare('SELECT id, name, stock_quantity FROM components WHERE id = ?');
+        $stmt->execute([$componentId]);
+        $comp = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$comp) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'Component not found']);
+            return;
+        }
+        // Fetch branches and per-branch stock if tables exist
+        $rows = [];
+        try {
+            $sql = "SELECT b.id as branch_id, b.code, b.name, COALESCE(s.stock_quantity, 0) as stock_quantity
+                    FROM branches b
+                    LEFT JOIN component_branch_stock s ON s.branch_id = b.id AND s.component_id = :cid
+                    WHERE b.is_active = 1
+                    ORDER BY b.id ASC";
+            $q = $pdo->prepare($sql);
+            $q->execute([':cid' => $componentId]);
+            $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $t) {
+            // If branches table does not exist, return empty list
+            $rows = [];
+        }
+        echo json_encode(['success' => true, 'data' => [
+            'component' => $comp,
+            'branches' => $rows
+        ]]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+}
 set_exception_handler(function($exception) {
     http_response_code(500);
     // The cors.php file already set the Content-Type to json
@@ -22,10 +77,14 @@ set_exception_handler(function($exception) {
 require_once __DIR__ . '/../config/database.php';
 $pdo = get_db_connection();
 require_once __DIR__ . '/../utils/jwt_helper.php';
+require_once __DIR__ . '/../utils/branch_helper.php';
 require_once __DIR__ . '/auth.php'; // has all the auth functions
 require_once __DIR__ . '/builds.php'; // has all the build functions
 require_once __DIR__ . '/notifications.php'; // has all the notification functions
 require_once __DIR__ . '/dashboard.php'; // has all the dashboard data functions
+require_once __DIR__ . '/orders.php'; // sales/orders endpoints
+require_once __DIR__ . '/otp.php'; // OTP endpoints (request/verify)
+require_once __DIR__ . '/mail.php'; // Mail test endpoint (admin only)
 
 // debug: check if builds functions are loaded
 // error_log("API Router: Checking if builds functions are loaded...");
@@ -200,7 +259,7 @@ function handleDeleteComponent($pdo) {
 
 // --- User Management Functions ---
 function handleGetUsers($pdo) {
-    // Verify admin access
+    // Verify admin or super admin access
     $token = getBearerToken();
     if (!$token) {
         http_response_code(401);
@@ -209,44 +268,48 @@ function handleGetUsers($pdo) {
     }
 
     try {
-        // Verify token and get user data
-        $decoded = verifyJwtToken($token);
-        if (!$decoded) {
+        // Verify token and get requester data
+        $decoded = verifyJWT($token);
+        if (!$decoded || !isset($decoded['user_id'])) {
             http_response_code(401);
             echo json_encode(['success' => false, 'error' => 'Invalid or expired token']);
             return;
         }
 
-        // Check if user has admin privileges
-        $stmt = $pdo->prepare("SELECT role FROM users WHERE id = ?");
-        $stmt->execute([$decoded->user_id]);
-        $user = $stmt->fetch();
-
-        if (!$user || !in_array(strtolower($user['role']), ['admin', 'super admin'])) {
+        // Ensure requester has Admin or Super Admin role
+        $roles = $decoded['roles'] ?? [];
+        if (is_string($roles)) $roles = explode(',', $roles);
+        if (!(in_array('Admin', $roles) || in_array('Super Admin', $roles))) {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'Insufficient permissions']);
             return;
         }
 
-        // Fetch all users except the current user
-        $stmt = $pdo->prepare("SELECT id, username, email, role, is_active, last_login, 
-                              can_access_inventory, can_access_orders, can_access_chat_support 
-                              FROM users WHERE id != ?");
-        $stmt->execute([$decoded->user_id]);
+        // Fetch all users except the current user, including aggregated roles
+        $stmt = $pdo->prepare("SELECT 
+                u.id, u.username, u.email, u.is_active, u.last_login,
+                u.can_access_inventory, u.can_access_orders, u.can_access_chat_support,
+                GROUP_CONCAT(r.name) AS roles
+            FROM users u
+            LEFT JOIN user_roles ur ON u.id = ur.user_id
+            LEFT JOIN roles r ON ur.role_id = r.id
+            WHERE u.id != ?
+            GROUP BY u.id");
+        $stmt->execute([$decoded['user_id']]);
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         // Format the response
         $formattedUsers = array_map(function($user) {
             return [
-                'id' => $user['id'],
+                'id' => (int)$user['id'],
                 'username' => $user['username'],
                 'email' => $user['email'],
-                'role' => strtolower($user['role']),
+                'roles' => $user['roles'] ? explode(',', $user['roles']) : [],
                 'is_active' => (bool)$user['is_active'],
                 'last_login' => $user['last_login'],
-                'can_access_inventory' => (bool)$user['can_access_inventory'],
-                'can_access_orders' => (bool)$user['can_access_orders'],
-                'can_access_chat_support' => (bool)$user['can_access_chat_support']
+                'can_access_inventory' => (int)$user['can_access_inventory'] === 1,
+                'can_access_orders' => (int)$user['can_access_orders'] === 1,
+                'can_access_chat_support' => (int)$user['can_access_chat_support'] === 1
             ];
         }, $users);
 
@@ -326,10 +389,32 @@ function handleGetComponents($pdo) {
         return;
     }
 
-    // grab all active components for that category
-    $stmt = $pdo->prepare("SELECT * FROM components WHERE category_id = ? AND (is_active IS NULL OR is_active = 1)");
-    $stmt->execute([$category['id']]);
-    $components = $stmt->fetchAll();
+    // Branch-aware fetch: when branch or branch_id provided, override stock by branch rows
+    $branchCode = $_GET['branch'] ?? null;
+    $branchIdParam = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : null;
+    $branchId = null;
+    if ($branchIdParam && $branchIdParam > 0) {
+        $branchId = $branchIdParam;
+    } elseif (!empty($branchCode)) {
+        $branchId = get_branch_id_by_code($pdo, $branchCode);
+    }
+
+    if ($branchId) {
+        $sql = "SELECT c.id, c.name, c.category_id, c.brand, c.price, c.image_url, c.specs, c.is_active,
+                       COALESCE(s.stock_quantity, 0) AS stock_quantity
+                FROM components c
+                LEFT JOIN component_branch_stock s
+                  ON s.component_id = c.id AND s.branch_id = :branch
+                WHERE c.category_id = :cat AND (c.is_active IS NULL OR c.is_active = 1)";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':branch' => $branchId, ':cat' => $category['id']]);
+        $components = $stmt->fetchAll();
+    } else {
+        // grab all active components for that category
+        $stmt = $pdo->prepare("SELECT * FROM components WHERE category_id = ? AND (is_active IS NULL OR is_active = 1)");
+        $stmt->execute([$category['id']]);
+        $components = $stmt->fetchAll();
+    }
 
     // Debug: log count
     error_log("handleGetComponents: category_id=" . $category['id'] . ", component_count=" . count($components));
@@ -427,6 +512,24 @@ switch ($endpoint) {
         }
         break;
 
+    case 'otp_request':
+        if ($method === 'POST') {
+            handleOtpRequest($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
+    case 'otp_verify':
+        if ($method === 'POST') {
+            handleOtpVerify($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
     case 'get_users':
         if ($method === 'GET') {
             handleGetUsers($pdo);
@@ -439,6 +542,15 @@ switch ($endpoint) {
     case 'components':
         if ($method === 'GET') {
             handleGetComponents($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
+    case 'component_stock':
+        if ($method === 'GET') {
+            handleGetComponentStock($pdo);
         } else {
             http_response_code(405);
             echo json_encode(['error' => 'Method Not Allowed']);
@@ -566,6 +678,24 @@ switch ($endpoint) {
         }
         break;
 
+    case 'orders':
+        // Sales module: record transactions and fetch orders
+        if ($method === 'GET') {
+            if (isset($_GET['id'])) {
+                handleGetOrder($pdo);
+            } else {
+                handleGetOrders($pdo);
+            }
+        } elseif ($method === 'POST') {
+            handleCreateOrder($pdo);
+        } elseif ($method === 'PUT') {
+            handleUpdateOrderStatus($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
     case 'categories':
         if ($method === 'GET') {
             $stmt = $pdo->query('SELECT id, name FROM component_categories ORDER BY name ASC');
@@ -598,6 +728,15 @@ switch ($endpoint) {
     case 'update_chat_support_access':
         if ($method === 'PUT') {
             handleUpdateChatSupportAccess($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
+    case 'mail_test':
+        if ($method === 'POST') {
+            handleMailTest($pdo);
         } else {
             http_response_code(405);
             echo json_encode(['error' => 'Method Not Allowed']);

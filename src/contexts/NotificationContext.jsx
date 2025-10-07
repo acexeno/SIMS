@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../utils/apiBase'
+import { ensureValidToken, authorizedFetch } from '../utils/auth'
 
 const NotificationContext = createContext()
 
@@ -15,6 +16,23 @@ export const NotificationProvider = ({ children, user }) => {
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
+  const pollRef = useRef(null)
+
+  // Local helper to check if JWT token is expired
+  const isTokenExpired = (token) => {
+    try {
+      const part = token.split('.')[1]
+      if (!part) return true
+      // Convert base64url -> base64 and add padding if needed
+      let b64 = part.replace(/-/g, '+').replace(/_/g, '/')
+      while (b64.length % 4) b64 += '='
+      const payload = JSON.parse(atob(b64))
+      if (!payload.exp) return false
+      return Date.now() >= payload.exp * 1000
+    } catch {
+      return true
+    }
+  }
 
   // Load notifications when user changes
   useEffect(() => {
@@ -22,13 +40,26 @@ export const NotificationProvider = ({ children, user }) => {
       loadNotifications()
       loadUnreadCount()
       // Poll unread count every 5 seconds
-      const interval = setInterval(() => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      pollRef.current = setInterval(() => {
         loadUnreadCount()
       }, 5000)
-      return () => clearInterval(interval)
+      return () => {
+        if (pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+      }
     } else {
       setNotifications([])
       setUnreadCount(0)
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
     }
   }, [user])
 
@@ -37,19 +68,30 @@ export const NotificationProvider = ({ children, user }) => {
     
     setLoading(true)
     try {
-      const token = localStorage.getItem('token')
+      const token = await ensureValidToken(false)
       if (!token) {
+        setNotifications([])
+        setUnreadCount(0)
+        // Stop polling to avoid repeated errors
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
         setLoading(false)
         return
       }
 
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, { method: 'GET' })
       
+      if (response.status === 401) {
+        // Do not clear global token here. Just reset local state and stop.
+        setNotifications([])
+        setUnreadCount(0)
+        // Stop polling to avoid repeated 401 console spam
+        if (pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+        return
+      }
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -72,16 +114,26 @@ export const NotificationProvider = ({ children, user }) => {
     if (!user || !user.id) return
     
     try {
-      const token = localStorage.getItem('token')
-      if (!token) return
+      const token = await ensureValidToken(false)
+      if (!token) {
+        setNotifications([])
+        setUnreadCount(0)
+        return
+      }
 
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications&count=1`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&count=1`, { method: 'GET' })
       
+      if (response.status === 401) {
+        // Do not clear global token here. Just reset local state and stop polling.
+        setNotifications([])
+        setUnreadCount(0)
+        if (pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+        return
+      }
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -97,18 +149,20 @@ export const NotificationProvider = ({ children, user }) => {
     if (!user || !user.id) return
     
     try {
-      const token = localStorage.getItem('token')
+      const token = await ensureValidToken(false)
       if (!token) return
 
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications`, {
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notification_id: notificationId })
       })
       
+      if (response.status === 401) {
+        // Do not clear global token here.
+        return
+      }
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -132,16 +186,18 @@ export const NotificationProvider = ({ children, user }) => {
     if (!user || !user.id) return
     
     try {
-      const token = localStorage.getItem('token')
+      const token = await ensureValidToken(false)
       if (!token) return
 
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications&action=mark-all-read`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&action=mark-all-read`, {
+        method: 'PUT'
       })
       
+      if (response.status === 401) {
+        // Do not clear global token here.
+        return
+      }
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -159,18 +215,20 @@ export const NotificationProvider = ({ children, user }) => {
   const deleteNotification = async (notificationId) => {
     if (!user || !user.id) return
     try {
-      const token = localStorage.getItem('token')
+      const token = await ensureValidToken(false)
       if (!token) return
 
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications`, {
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notification_id: notificationId })
       })
       
+      if (response.status === 401) {
+        // Do not clear global token here.
+        return
+      }
+
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -194,15 +252,16 @@ export const NotificationProvider = ({ children, user }) => {
   const deleteAllNotifications = async () => {
     if (!user || !user.id) return;
     try {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-      const response = await fetch(`${API_BASE}/index.php?endpoint=notifications&all=1`, {
+      const token = await ensureValidToken(false)
+      if (!token) return
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&all=1`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+        headers: { 'Content-Type': 'application/json' }
+      })
+      if (response.status === 401) {
+        // Do not clear global token here.
+        return;
+      }
       if (response.ok) {
         setNotifications([]);
         setUnreadCount(0);

@@ -29,6 +29,29 @@ const COMPATIBILITY_RULES = {
     'DDR3': ['DDR3']
   },
 
+  // RAM Speed Compatibility (MHz)
+  ram_speeds: {
+    'DDR4': {
+      'min': 2133,
+      'max': 4800,
+      'recommended': [2400, 2666, 3000, 3200, 3600, 4000]
+    },
+    'DDR5': {
+      'min': 4800,
+      'max': 8000,
+      'recommended': [4800, 5200, 5600, 6000, 6400]
+    }
+  },
+
+  // CPU-RAM Compatibility
+  cpu_ram_compatibility: {
+    'Intel LGA1200': ['DDR4'],
+    'Intel LGA1700': ['DDR4', 'DDR5'],
+    'Intel LGA1151': ['DDR4'],
+    'AMD AM4': ['DDR4'],
+    'AMD AM5': ['DDR5']
+  },
+
   // Form Factor Compatibility
   form_factors: {
     'ATX': ['ATX', 'Micro-ATX', 'Mini-ITX'],
@@ -139,7 +162,8 @@ const extractSocketFromName = (name) => {
     }
   }
   
-  // Intel CPU model number to socket mapping
+  // Intel CPU model number to socket mapping - More comprehensive
+  // Intel 10th/11th gen (LGA1200)
   if (lowerName.includes('i7-11700') || lowerName.includes('i7-11700k') || lowerName.includes('i7-11700f')) {
     return 'Intel LGA1200';
   }
@@ -152,22 +176,39 @@ const extractSocketFromName = (name) => {
   if (lowerName.includes('i9-11900') || lowerName.includes('i9-10900')) {
     return 'Intel LGA1200';
   }
-  
-  // Intel 12th/13th gen (LGA1700)
-  if (lowerName.includes('i7-12700') || lowerName.includes('i7-13700')) {
-    return 'Intel LGA1700';
+  if (lowerName.includes('i5-10400') || lowerName.includes('i5-10600')) {
+    return 'Intel LGA1200';
   }
-  if (lowerName.includes('i5-12600') || lowerName.includes('i5-13600')) {
-    return 'Intel LGA1700';
-  }
-  if (lowerName.includes('i3-12100') || lowerName.includes('i3-13100')) {
-    return 'Intel LGA1700';
-  }
-  if (lowerName.includes('i9-12900') || lowerName.includes('i9-13900')) {
-    return 'Intel LGA1700';
+  if (lowerName.includes('i3-10100') || lowerName.includes('i3-10300')) {
+    return 'Intel LGA1200';
   }
   
-  // AMD Ryzen socket detection
+  // Intel 12th/13th/14th gen (LGA1700)
+  if (lowerName.includes('i7-12700') || lowerName.includes('i7-13700') || lowerName.includes('i7-14700')) {
+    return 'Intel LGA1700';
+  }
+  if (lowerName.includes('i5-12600') || lowerName.includes('i5-13600') || lowerName.includes('i5-14600')) {
+    return 'Intel LGA1700';
+  }
+  if (lowerName.includes('i3-12100') || lowerName.includes('i3-13100') || lowerName.includes('i3-14100')) {
+    return 'Intel LGA1700';
+  }
+  if (lowerName.includes('i9-12900') || lowerName.includes('i9-13900') || lowerName.includes('i9-14900')) {
+    return 'Intel LGA1700';
+  }
+  
+  // Intel 8th/9th gen (LGA1151)
+  if (lowerName.includes('i7-8700') || lowerName.includes('i7-9700')) {
+    return 'Intel LGA1151';
+  }
+  if (lowerName.includes('i5-8400') || lowerName.includes('i5-9400')) {
+    return 'Intel LGA1151';
+  }
+  if (lowerName.includes('i3-8100') || lowerName.includes('i3-9100')) {
+    return 'Intel LGA1151';
+  }
+  
+  // AMD Ryzen socket detection - More comprehensive
   if (lowerName.includes('ryzen 3 3200g') || lowerName.includes('ryzen 5 5600g') || lowerName.includes('ryzen 5 5600gt')) {
     return 'AMD AM4';
   }
@@ -176,6 +217,16 @@ const extractSocketFromName = (name) => {
   }
   if (lowerName.includes('ryzen 7 7700') || lowerName.includes('ryzen 9 7900')) {
     return 'AMD AM5';
+  }
+  
+  // AMD Athlon series (AM4)
+  if (lowerName.includes('athlon 200ge') || lowerName.includes('athlon 300ge') || lowerName.includes('athlon 3000g')) {
+    return 'AMD AM4';
+  }
+  
+  // AMD A-series (AM4)
+  if (lowerName.includes('a8 7680')) {
+    return 'AMD AM4';
   }
   
   return null;
@@ -342,9 +393,16 @@ const checkRAMMotherboardCompatibility = (ram, motherboard) => {
     issues.push(`RAM type mismatch: ${ramType} vs ${moboRamType}`);
   }
   
-  // Check RAM speed compatibility
-  if (ramSpeed && moboMaxSpeed && parseInt(ramSpeed) > parseInt(moboMaxSpeed)) {
-    issues.push(`RAM speed (${ramSpeed}MHz) exceeds motherboard maximum (${moboMaxSpeed}MHz)`);
+  // Enhanced RAM speed compatibility check
+  if (ramSpeed && moboMaxSpeed) {
+    const ramSpeedNum = parseInt(ramSpeed);
+    const moboMaxSpeedNum = parseInt(moboMaxSpeed);
+    
+    if (ramSpeedNum > moboMaxSpeedNum) {
+      issues.push(`RAM speed (${ramSpeed}MHz) exceeds motherboard maximum (${moboMaxSpeed}MHz)`);
+    } else if (ramSpeedNum < 2133) {
+      issues.push(`RAM speed (${ramSpeed}MHz) is below minimum supported (2133MHz)`);
+    }
   }
   
   // Check RAM capacity per module
@@ -368,12 +426,24 @@ const checkRAMMotherboardCompatibility = (ram, motherboard) => {
     }
   }
   
+  // Check for dual-channel optimization
+  if (ramSticks === 1 && moboRamSlots >= 2) {
+    issues.push('Warning: Single RAM stick detected - consider dual-channel setup for better performance');
+  }
+  
+  // Check for odd number of RAM sticks (not recommended)
+  if (ramSticks > 1 && ramSticks % 2 !== 0) {
+    issues.push('Warning: Odd number of RAM sticks may not enable dual-channel mode');
+  }
+  
   // Return results
   if (issues.length > 0) {
+    const criticalIssues = issues.filter(issue => !issue.startsWith('Warning:'));
     return {
-      compatible: false,
+      compatible: criticalIssues.length === 0,
       reason: issues.join('; '),
-      details
+      details,
+      warnings: issues.filter(issue => issue.startsWith('Warning:')).length
     };
   }
   
@@ -656,6 +726,15 @@ const checkComponentCompatibility = (component, selectedComponents, targetCatego
         const ramMoboCheck = checkRAMMotherboardCompatibility(component, selectedComponents.motherboard);
         if (!ramMoboCheck.compatible) {
           issues.push(ramMoboCheck.reason);
+          overallCompatible = false;
+        }
+      }
+      
+      // Check CPU-RAM compatibility
+      if (selectedComponents.cpu) {
+        const cpuRamCheck = checkCPURAMCompatibility(selectedComponents.cpu, component);
+        if (!cpuRamCheck.compatible) {
+          issues.push(cpuRamCheck.reason);
           overallCompatible = false;
         }
       }
@@ -1164,6 +1243,71 @@ export const getCaseCompatibilityGuidance = (selectedComponents) => {
   guidance.fallbackOptions.push('Any major brand ATX case should work');
 
   return guidance;
+};
+
+// CPU-RAM compatibility check
+const checkCPURAMCompatibility = (cpu, ram) => {
+  const cpuSocket = extractComponentSpecs(cpu, 'socket');
+  const ramType = extractComponentSpecs(ram, 'ram_type');
+  const ramSpeed = extractComponentSpecs(ram, 'speed');
+  
+  const issues = [];
+  const details = { cpuSocket, ramType, ramSpeed };
+  
+  // Check CPU-RAM type compatibility
+  if (cpuSocket && ramType) {
+    const supportedRamTypes = COMPATIBILITY_RULES.cpu_ram_compatibility[cpuSocket];
+    if (supportedRamTypes && !supportedRamTypes.includes(ramType)) {
+      issues.push(`CPU socket ${cpuSocket} does not support ${ramType} RAM`);
+    }
+  }
+  
+  // Check RAM speed compatibility with CPU
+  if (ramSpeed && cpuSocket) {
+    const ramSpeedNum = parseInt(ramSpeed);
+    const ramTypeForSpeed = ramType || 'DDR4'; // Default to DDR4 if not specified
+    
+    if (COMPATIBILITY_RULES.ram_speeds[ramTypeForSpeed]) {
+      const speedRules = COMPATIBILITY_RULES.ram_speeds[ramTypeForSpeed];
+      
+      if (ramSpeedNum < speedRules.min) {
+        issues.push(`RAM speed (${ramSpeed}MHz) is below minimum for ${ramTypeForSpeed} (${speedRules.min}MHz)`);
+      } else if (ramSpeedNum > speedRules.max) {
+        issues.push(`RAM speed (${ramSpeed}MHz) exceeds maximum for ${ramTypeForSpeed} (${speedRules.max}MHz)`);
+      }
+    }
+  }
+  
+  // CPU-specific RAM recommendations
+  const cpuName = cpu.name?.toLowerCase() || '';
+  if (cpuName.includes('ryzen')) {
+    if (ramSpeed && parseInt(ramSpeed) < 3000) {
+      issues.push('Warning: Ryzen CPUs benefit from faster RAM (3000MHz+)');
+    }
+  }
+  
+  if (cpuName.includes('i7-11700') || cpuName.includes('i5-11600')) {
+    if (ramSpeed && parseInt(ramSpeed) < 2666) {
+      issues.push('Warning: Intel 11th gen CPUs work better with faster RAM (2666MHz+)');
+    }
+  }
+  
+  // Return results
+  if (issues.length > 0) {
+    const criticalIssues = issues.filter(issue => !issue.startsWith('Warning:'));
+    return {
+      compatible: criticalIssues.length === 0,
+      reason: issues.join('; '),
+      details,
+      warnings: issues.filter(issue => issue.startsWith('Warning:')).length
+    };
+  }
+  
+  return {
+    compatible: true,
+    reason: 'RAM is compatible with CPU',
+    details
+  };
 };
 
 // Check compatibility between a CPU cooler and a case

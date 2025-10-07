@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from '../utils/apiBase';
+import { authorizedFetch, ensureValidToken } from '../utils/auth';
 import { 
   Plus, 
   Edit, 
@@ -17,10 +18,14 @@ import {
   MemoryStick,
   HardDrive,
   Server,
-  Shield
+  CheckSquare,
+  Clock,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
+import { formatCurrencyPHP } from '../utils/currency';
 
-const SuperAdminPrebuiltPCs = () => {
+const SuperAdminPrebuiltPCs = ({ user }) => {
   const [prebuilts, setPrebuilts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -29,7 +34,64 @@ const SuperAdminPrebuiltPCs = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [components, setComponents] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [seeding, setSeeding] = useState(false);
+
+  // Community Management state
+  const [communitySubmissions, setCommunitySubmissions] = useState([]);
+  const [submissionStats, setSubmissionStats] = useState({ pending: 0, approved: 0, rejected: 0 });
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [selectedSubmission, setSelectedSubmission] = useState(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewingSubmission, setReviewingSubmission] = useState(false);
+  const [communityStatus, setCommunityStatus] = useState('pending');
+  const [communityPage, setCommunityPage] = useState(1);
+  const [communityPages, setCommunityPages] = useState(1);
+
+  // Role state (derive from props, localStorage, or JWT)
+  const [currentRoles, setCurrentRoles] = useState([]);
+  // removed seeding controls
+
+  useEffect(() => {
+    const normalizeRoles = (r) => {
+      if (!r) return [];
+      if (Array.isArray(r)) return r;
+      if (typeof r === 'string') return r.split(',').map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+    try {
+      // 1) From prop
+      let roles = normalizeRoles(user?.roles);
+      // 2) From localStorage 'user'
+      if (roles.length === 0) {
+        const uStr = localStorage.getItem('user');
+        if (uStr) {
+          try {
+            const uObj = JSON.parse(uStr);
+            roles = normalizeRoles(uObj?.roles);
+          } catch {}
+        }
+      }
+      // 3) Decode JWT payload
+      if (roles.length === 0) {
+        const token = localStorage.getItem('token');
+        if (token && token.split('.').length === 3) {
+          const part = token.split('.')[1];
+          let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+          while (b64.length % 4) b64 += '=';
+          try {
+            const payload = JSON.parse(atob(b64));
+            roles = normalizeRoles(payload?.roles);
+          } catch {}
+        }
+      }
+      setCurrentRoles(roles);
+    } catch {
+      setCurrentRoles([]);
+    }
+  }, [user]);
+
+  // removed seeding status check
+
+  const isAdminOrSuper = currentRoles.includes('Admin') || currentRoles.includes('Super Admin');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -56,12 +118,9 @@ const SuperAdminPrebuiltPCs = () => {
   // Fetch prebuilts
   const fetchPrebuilts = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/prebuilts.php?all=1`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const token = await ensureValidToken(false);
+      if (!token) { setLoading(false); return; }
+      const response = await authorizedFetch(`${API_BASE}/prebuilts.php?all=1`);
       const data = await response.json();
       if (Array.isArray(data)) {
         setPrebuilts(data);
@@ -73,30 +132,23 @@ const SuperAdminPrebuiltPCs = () => {
     }
   };
 
-  // Seed default prebuilts from live components (Admin/Super Admin)
-  const handleGenerateDefaults = async () => {
-    if (!window.confirm('Generate curated default Prebuilt PC options from current inventory?')) return;
-    setSeeding(true);
+  // Safely parse JSON fields that might already be objects/arrays
+  const safeParseJson = (value, fallback) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/prebuilts.php?seed=1`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const result = await response.json();
-      if (result.success) {
-        await fetchPrebuilts();
-        alert(`Successfully generated ${Array.isArray(result.created) ? result.created.length : 0} prebuilts.`);
-      } else {
-        alert(result.error || 'Seeding failed');
+      if (value == null) return fallback;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed === '') return fallback;
+        return JSON.parse(trimmed);
       }
-    } catch (e) {
-      console.error('Error seeding prebuilts:', e);
-      alert('Error seeding prebuilts. Please try again.');
-    } finally {
-      setSeeding(false);
+      if (typeof value === 'object') return value;
+      return fallback;
+    } catch {
+      return fallback;
     }
   };
+
+  // removed seeding handlers
 
   // Fetch components for selection
   const fetchComponents = async () => {
@@ -156,11 +208,11 @@ const SuperAdminPrebuiltPCs = () => {
         category: prebuilt.category,
         description: prebuilt.description || '',
         price: prebuilt.price,
-        performance: prebuilt.performance ? JSON.parse(prebuilt.performance) : { gaming: '', streaming: '' },
-        features: prebuilt.features ? JSON.parse(prebuilt.features) : [''],
-        component_ids: prebuilt.component_ids ? JSON.parse(prebuilt.component_ids) : {
+        performance: safeParseJson(prebuilt.performance, { gaming: '', streaming: '' }),
+        features: safeParseJson(prebuilt.features, ['']),
+        component_ids: safeParseJson(prebuilt.component_ids, {
           cpu: '', motherboard: '', gpu: '', ram: '', storage: '', psu: '', case: '', cooler: ''
-        },
+        }),
         in_stock: prebuilt.in_stock === '1',
         is_hidden: prebuilt.is_hidden === '1'
       });
@@ -187,18 +239,18 @@ const SuperAdminPrebuiltPCs = () => {
       return;
     }
     try {
-      const token = localStorage.getItem('token');
+      const token = await ensureValidToken(false);
+      if (!token) { alert('Session expired. Please log in again.'); return; }
       const url = editingPrebuilt 
         ? `${API_BASE}/prebuilts.php?id=${editingPrebuilt.id}`
         : `${API_BASE}/prebuilts.php`;
       
       const method = editingPrebuilt ? 'PUT' : 'POST';
       
-      const response = await fetch(url, {
+      const response = await authorizedFetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(formData)
       });
@@ -223,12 +275,10 @@ const SuperAdminPrebuiltPCs = () => {
     if (!window.confirm('Are you sure you want to delete this prebuilt?')) return;
     
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/prebuilts.php?id=${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const token = await ensureValidToken(false);
+      if (!token) { alert('Session expired. Please log in again.'); return; }
+      const response = await authorizedFetch(`${API_BASE}/prebuilts.php?id=${id}`, {
+        method: 'DELETE'
       });
       
       const data = await response.json();
@@ -312,6 +362,96 @@ const SuperAdminPrebuiltPCs = () => {
     }
   };
 
+  // --- Community Management helpers and effects ---
+  const formatDate = (date) => {
+    try {
+      return new Date(date).toLocaleString();
+    } catch {
+      return String(date || '');
+    }
+  };
+
+  const getCompatibilityStatus = (compatibility) => {
+    const value = Number(compatibility) || 0;
+    if (value >= 90) return { label: 'Excellent', color: 'text-green-600', bg: 'bg-green-100', icon: <CheckCircle className="w-4 h-4" /> };
+    if (value >= 70) return { label: 'Good', color: 'text-yellow-600', bg: 'bg-yellow-100', icon: <AlertCircle className="w-4 h-4" /> };
+    return { label: 'Issues', color: 'text-red-600', bg: 'bg-red-100', icon: <AlertCircle className="w-4 h-4" /> };
+  };
+
+  const fetchSubmissionStats = async () => {
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) return;
+      const res = await authorizedFetch(`${API_BASE}/community_management.php?action=stats`);
+      const result = await res.json();
+      if (result && result.success) {
+        const stats = { pending: 0, approved: 0, rejected: 0 };
+        (result.data || []).forEach(row => { stats[row.status] = Number(row.count) || 0; });
+        setSubmissionStats(stats);
+      }
+    } catch (e) {
+      console.error('Error fetching submission stats:', e);
+    }
+  };
+
+  const fetchCommunitySubmissions = async (status = 'pending', page = 1) => {
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) return;
+      setSubmissionsLoading(true);
+      const params = new URLSearchParams();
+      if (status) params.append('status', status);
+      params.append('page', String(page));
+      const res = await authorizedFetch(`${API_BASE}/community_management.php?action=submissions&${params.toString()}`);
+      const data = await res.json();
+      if (data && data.success) {
+        setCommunitySubmissions(Array.isArray(data.data) ? data.data : []);
+        const p = data.pagination || {};
+        setCommunityPages(Number(p.pages) || 1);
+      } else {
+        setCommunitySubmissions([]);
+        setCommunityPages(1);
+      }
+    } catch (e) {
+      console.error('Error fetching community submissions:', e);
+      setCommunitySubmissions([]);
+      setCommunityPages(1);
+    } finally {
+      setSubmissionsLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchSubmissionStats(); }, []);
+  useEffect(() => { fetchCommunitySubmissions(communityStatus, communityPage); }, [communityStatus, communityPage]);
+
+  const handleSubmissionReview = async (submissionId, status) => {
+    setReviewingSubmission(true);
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) { alert('You must be logged in to review submissions.'); return; }
+      const response = await authorizedFetch(`${API_BASE}/community_management.php?action=review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission_id: submissionId, status, admin_notes: reviewNotes })
+      });
+      const result = await response.json();
+      if (result && result.success) {
+        alert(`Submission ${status} successfully!`);
+        setSelectedSubmission(null);
+        setReviewNotes('');
+        fetchCommunitySubmissions(communityStatus, communityPage);
+        fetchSubmissionStats();
+      } else {
+        alert('Error reviewing submission: ' + (result && result.error ? result.error : 'Unknown error'));
+      }
+    } catch (e) {
+      console.error('Error reviewing submission:', e);
+      alert('Error reviewing submission. Please try again.');
+    } finally {
+      setReviewingSubmission(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -324,32 +464,33 @@ const SuperAdminPrebuiltPCs = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="page-container space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Prebuilt PC Management</h2>
-        <div className="flex gap-2">
-          <button
-            onClick={handleGenerateDefaults}
-            disabled={seeding}
-            className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm border ${seeding ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-800'}`}
-            title="Generate a fresh set of curated prebuilts from inventory"
-          >
-            <Shield className="h-4 w-4" />
-            {seeding ? 'Generating...' : 'Generate Defaults'}
-          </button>
-          <button
-            onClick={() => openModal()}
-            className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-sm"
-          >
-            <Plus className="h-4 w-4" />
-            Add Prebuilt
-          </button>
-        </div>
+        <h2 className="page-title">Prebuilt PC Management</h2>
+        {isAdminOrSuper && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => openModal()}
+              className="btn btn-primary shadow"
+            >
+              <Plus className="h-4 w-4" />
+              Add Prebuilt
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* seeding info removed */}
+
+      {!isAdminOrSuper && (
+        <div className="text-sm text-gray-600">
+          Note: Curated Prebuilt actions are limited to Admins. You can still manage Community submissions below.
+        </div>
+      )}
+
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="card">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -377,19 +518,15 @@ const SuperAdminPrebuiltPCs = () => {
       {/* Prebuilts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredPrebuilts.map((prebuilt) => (
-          <div key={prebuilt.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div key={prebuilt.id} className="card overflow-hidden">
             <div className="relative">
               {/* Status badges */}
               <div className="absolute top-2 left-2 flex gap-2">
                 {prebuilt.is_hidden === '1' && (
-                  <span className="bg-gray-500 text-white px-2 py-1 rounded-full text-xs font-medium">
-                    HIDDEN
-                  </span>
+                  <span className="chip chip-gray">HIDDEN</span>
                 )}
                 {prebuilt.in_stock === '0' && (
-                  <span className="bg-red-500 text-white px-2 py-1 rounded-full text-xs font-medium">
-                    OUT OF STOCK
-                  </span>
+                  <span className="chip chip-red">OUT OF STOCK</span>
                 )}
               </div>
             </div>
@@ -398,22 +535,24 @@ const SuperAdminPrebuiltPCs = () => {
             <div className="p-6">
               <div className="flex items-start justify-between mb-2">
                 <h3 className="text-lg font-semibold text-gray-900">{prebuilt.name}</h3>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => openModal(prebuilt)}
-                    className="p-1 text-blue-500 hover:text-blue-700"
-                    title="Edit"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(prebuilt.id)}
-                    className="p-1 text-red-500 hover:text-red-700"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                {isAdminOrSuper && (
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => openModal(prebuilt)}
+                      className="btn btn-outline px-2 py-1"
+                      title="Edit"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(prebuilt.id)}
+                      className="btn btn-outline px-2 py-1 text-red-600 border-red-200 hover:bg-red-50"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
@@ -422,7 +561,7 @@ const SuperAdminPrebuiltPCs = () => {
               </div>
               
               <div className="text-lg font-bold text-green-600 mb-2">
-                ₱{parseFloat(prebuilt.price).toLocaleString()}
+                {formatCurrencyPHP(prebuilt.price)}
               </div>
               
               {prebuilt.description && (
@@ -431,9 +570,13 @@ const SuperAdminPrebuiltPCs = () => {
 
               {/* Component preview */}
               <div className="text-xs text-gray-500 space-y-1">
-                <div>CPU: {getComponentName(JSON.parse(prebuilt.component_ids || '{}').cpu)}</div>
-                <div>GPU: {getComponentName(JSON.parse(prebuilt.component_ids || '{}').gpu)}</div>
-                <div>RAM: {getComponentName(JSON.parse(prebuilt.component_ids || '{}').ram)}</div>
+                {(() => { const cids = safeParseJson(prebuilt.component_ids, {}); return (
+                  <>
+                    <div>CPU: {getComponentName(cids.cpu)}</div>
+                    <div>GPU: {getComponentName(cids.gpu)}</div>
+                    <div>RAM: {getComponentName(cids.ram)}</div>
+                  </>
+                ); })()}
               </div>
             </div>
           </div>
@@ -441,9 +584,180 @@ const SuperAdminPrebuiltPCs = () => {
       </div>
 
       {filteredPrebuilts.length === 0 && (
-        <div className="text-center py-12">
-          <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500">No prebuilts found</p>
+        <div className="card empty-state">
+          <Package className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+          <p>No prebuilts found</p>
+        </div>
+      )}
+
+      {/* Community Management Panel */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <CheckSquare className="w-5 h-5 text-green-600" />
+            <h3 className="text-lg font-semibold text-gray-900">Community Management</h3>
+          </div>
+          <div className="flex gap-2 text-sm">
+            <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700">Pending: {submissionStats.pending || 0}</span>
+            <span className="px-2 py-1 rounded-full bg-green-100 text-green-700">Approved: {submissionStats.approved || 0}</span>
+            <span className="px-2 py-1 rounded-full bg-red-100 text-red-700">Rejected: {submissionStats.rejected || 0}</span>
+          </div>
+        </div>
+
+        {/* Status Tabs */}
+        <div className="flex items-center gap-2 mb-4">
+          {['pending','approved','rejected'].map(s => (
+            <button
+              key={s}
+              onClick={() => { setCommunityStatus(s); setCommunityPage(1); }}
+              className={`px-4 py-2 rounded-md border ${communityStatus===s ? 'bg-white text-green-600 border-green-300' : 'text-gray-600 hover:text-gray-900 border-gray-200'}`}
+            >
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {s==='pending' && (submissionStats.pending||0) > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                  {submissionStats.pending}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Submissions List */}
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 text-sm text-gray-600 flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            {submissionsLoading ? 'Loading submissions...' : `${communitySubmissions.length} ${communityStatus} submission(s)`}
+          </div>
+          {communitySubmissions.length === 0 && !submissionsLoading && (
+            <div className="p-6 text-center text-gray-500">No {communityStatus} submissions found.</div>
+          )}
+          {communitySubmissions.length > 0 && (
+            <div className="divide-y">
+              {communitySubmissions.map(sub => {
+                const compat = getCompatibilityStatus(sub.compatibility);
+                return (
+                  <div key={sub.id} className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900 truncate">{sub.build_name}</span>
+                        <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${compat.bg} ${compat.color}`}>
+                          {compat.icon}
+                          {compat.label}
+                        </span>
+                        <span className="text-xs text-gray-500">₱{Number(sub.total_price || 0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1 flex flex-wrap gap-2">
+                        <span>By: <span className="font-medium">{sub.submitter_name || 'Unknown'}</span></span>
+                        {sub.submitter_email && <span>({sub.submitter_email})</span>}
+                        <span>Submitted: {formatDate(sub.submitted_at)}</span>
+                        {sub.reviewer_name && sub.reviewed_at && (
+                          <span>Reviewed by {sub.reviewer_name} on {formatDate(sub.reviewed_at)}</span>
+                        )}
+                      </div>
+                      {sub.build_description && (
+                        <p className="text-sm text-gray-700 mt-2 line-clamp-2">{sub.build_description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {communityStatus === 'pending' ? (
+                        <button
+                          onClick={() => { setSelectedSubmission(sub); setReviewNotes(sub.admin_notes || ''); }}
+                          className="px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          Review
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-500">{sub.status?.toUpperCase()}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Pagination */}
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 text-sm text-gray-600">
+            <button
+              onClick={() => setCommunityPage(p => Math.max(1, p - 1))}
+              disabled={communityPage <= 1}
+              className={`px-3 py-1 rounded border ${communityPage <= 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white'}`}
+            >
+              Prev
+            </button>
+            <span>Page {communityPage} of {communityPages}</span>
+            <button
+              onClick={() => setCommunityPage(p => Math.min(communityPages, p + 1))}
+              disabled={communityPage >= communityPages}
+              className={`px-3 py-1 rounded border ${communityPage >= communityPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white'}`}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Review Modal */}
+      {selectedSubmission && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-2xl w-full">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-gray-900">Review Submission</h3>
+              <button onClick={() => setSelectedSubmission(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <div className="text-sm text-gray-500">Build Name</div>
+                <div className="text-base font-semibold text-gray-900">{selectedSubmission.build_name}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
+                <div>Submitter: <span className="font-medium">{selectedSubmission.submitter_name}</span></div>
+                <div>Submitted: {formatDate(selectedSubmission.submitted_at)}</div>
+                <div>Compatibility: {selectedSubmission.compatibility}%</div>
+                <div>Total Price: ₱{Number(selectedSubmission.total_price || 0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+              </div>
+              {selectedSubmission.build_description && (
+                <div>
+                  <div className="text-sm text-gray-500 mb-1">Description</div>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{selectedSubmission.build_description}</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Admin Notes (optional)</label>
+                <textarea
+                  value={reviewNotes}
+                  onChange={(e) => setReviewNotes(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  placeholder="Add a note to the submitter (optional)"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setSelectedSubmission(null)}
+                className="px-4 py-2 rounded-md border"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={reviewingSubmission}
+                onClick={() => handleSubmissionReview(selectedSubmission.id, 'rejected')}
+                className={`px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white ${reviewingSubmission ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                Reject
+              </button>
+              <button
+                disabled={reviewingSubmission}
+                onClick={() => handleSubmissionReview(selectedSubmission.id, 'approved')}
+                className={`px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 text-white ${reviewingSubmission ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                Approve
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -614,7 +928,7 @@ const SuperAdminPrebuiltPCs = () => {
                           })
                           .map(component => (
                             <option key={component.id} value={component.id}>
-                              {component.name} - ₱{!isNaN(parseFloat(component.price)) && component.price !== null && component.price !== undefined ? parseFloat(component.price).toLocaleString() : '0'}
+                              {component.name} - {formatCurrencyPHP(component.price)}
                             </option>
                           ))}
                       </select>

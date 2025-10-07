@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from '../utils/apiBase';
-import { Plus, Trash2, Edit, Eye, Share2, Download, Calendar, DollarSign, CheckCircle, AlertCircle, Clock, Package, Globe, Lock } from 'lucide-react';
+import { Plus, Trash2, Edit, Eye, Share2, Download, Calendar, CheckCircle, AlertCircle, Clock, Package, Globe, Lock } from 'lucide-react';
+import { getCompatibilityScore as calcCompatibility } from '../utils/compatibilityService';
+import { formatCurrencyPHP } from '../utils/currency';
 
-// Helper function to check if JWT token is expired
+// Helper function to check if JWT token is expired (supports base64url)
 function isTokenExpired(token) {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+    const part = token.split('.')[1];
+    if (!part) return true;
+    let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const payload = JSON.parse(atob(b64));
     if (!payload.exp) return false;
     return Date.now() >= payload.exp * 1000;
   } catch {
@@ -27,7 +33,6 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
     const fetchBuilds = async () => {
       const token = localStorage.getItem('token');
       if (!token || isTokenExpired(token)) {
-        localStorage.removeItem('token');
         setLoading(false);
         return;
       }
@@ -40,11 +45,9 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
           headers
         });
         if (response.status === 401) {
-          // Remove invalid token and stop further requests
-          localStorage.removeItem('token');
+          // Do not clear global token here; just stop this flow
           setLoading(false);
           setBuilds([]);
-          // Optionally, redirect to login or show a message
           return;
         }
         const result = await response.json();
@@ -86,10 +89,11 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   const confirmDelete = async () => {
     if (!buildToDelete) return;
     try {
+      const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/index.php?endpoint=builds&id=${buildToDelete}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         }
       });
       const result = await response.json();
@@ -109,10 +113,11 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   const handleTogglePublic = async (buildId) => {
     setTogglingPublic(buildId);
     try {
+      const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/index.php?endpoint=builds&public=1&id=${buildId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         }
       });
       const result = await response.json();
@@ -274,12 +279,37 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   );
 
   const BuildCard = ({ build }) => {
-    const compatibility = getCompatibilityStatus(build.compatibility);
-    const submission = submissions.find(s => s.build_id === build.id);
     // Ensure components is always an array
     const components = Array.isArray(build.components)
       ? build.components
       : Object.values(build.components || {});
+
+    // Fallback: recompute compatibility when saved value is 0/undefined and we have components
+    let effectiveCompatibility = typeof build.compatibility === 'number' ? build.compatibility : 0;
+    if ((!effectiveCompatibility || effectiveCompatibility === 0) && components.length > 0) {
+      try {
+        const keyAliases = {
+          cpu: ['cpu', 'processor', 'procie'],
+          motherboard: ['motherboard', 'mobo'],
+          gpu: ['gpu', 'graphics card', 'graphics', 'video card'],
+          ram: ['ram', 'memory'],
+          storage: ['storage', 'ssd', 'hdd', 'nvme'],
+          psu: ['psu', 'power supply'],
+          case: ['case', 'chassis'],
+          cooler: ['cooler', 'cooling', 'aio']
+        };
+        const selected = {};
+        components.forEach(c => {
+          const cat = String(c?.category || '').toLowerCase();
+          const canon = Object.keys(keyAliases).find(k => k === cat || keyAliases[k].some(a => cat.includes(a)));
+          if (canon) selected[canon] = c;
+        });
+        const comp = calcCompatibility(selected);
+        if (comp && typeof comp.score === 'number') effectiveCompatibility = comp.score;
+      } catch {}
+    }
+    const compatibility = getCompatibilityStatus(effectiveCompatibility);
+    const submission = submissions.find(s => s.build_id === build.id);
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
         <div className="p-6">
@@ -293,8 +323,8 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                   {safeDate(build.createdAt)}
                 </div>
                 <div className="flex items-center gap-1">
-                  <DollarSign className="w-4 h-4" />
-                  ₱{safePrice(build.totalPrice).toLocaleString()}
+                  <span className="text-gray-700">₱</span>
+                  {formatCurrencyPHP(safePrice(build.totalPrice))}
                 </div>
               </div>
             </div>
@@ -348,7 +378,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
               <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${compatibility.bgColor}`}>
                 {compatibility.icon}
                 <span className={`text-sm font-medium ${compatibility.color}`}>
-                  {build.compatibility}% Compatible
+                  {effectiveCompatibility}% Compatible
                 </span>
               </div>
               
@@ -373,7 +403,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
               <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">
                 <div className="text-xs font-medium text-gray-600 mb-1">{component.category}</div>
                 <div className="text-sm font-semibold text-gray-900 truncate">{component.name}</div>
-                <div className="text-xs text-gray-500">₱{Number(component.price || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-500">{formatCurrencyPHP(component.price || 0)}</div>
               </div>
             ))}
           </div>
@@ -464,7 +494,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
         
         {builds.length > 0 && (
           <div className="mb-6 text-gray-700 text-lg">
-            Total builds: {totalBuilds} &nbsp; • &nbsp; Total value: ₱{totalValue.toLocaleString()}
+            Total builds: {totalBuilds} &nbsp; • &nbsp; Total value: {formatCurrencyPHP(totalValue)}
           </div>
         )}
       </div>
@@ -520,6 +550,30 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
           const components = Array.isArray(selectedBuild.components)
             ? selectedBuild.components
             : Object.values(selectedBuild.components || {});
+          // Recompute compatibility if missing/zero
+          let effectiveCompatibility = typeof selectedBuild.compatibility === 'number' ? selectedBuild.compatibility : 0;
+          if ((!effectiveCompatibility || effectiveCompatibility === 0) && components.length > 0) {
+            try {
+              const keyAliases = {
+                cpu: ['cpu', 'processor', 'procie'],
+                motherboard: ['motherboard', 'mobo'],
+                gpu: ['gpu', 'graphics card', 'graphics', 'video card'],
+                ram: ['ram', 'memory'],
+                storage: ['storage', 'ssd', 'hdd', 'nvme'],
+                psu: ['psu', 'power supply'],
+                case: ['case', 'chassis'],
+                cooler: ['cooler', 'cooling', 'aio']
+              };
+              const selected = {};
+              components.forEach(c => {
+                const cat = String(c?.category || '').toLowerCase();
+                const canon = Object.keys(keyAliases).find(k => k === cat || keyAliases[k].some(a => cat.includes(a)));
+                if (canon) selected[canon] = c;
+              });
+              const comp = calcCompatibility(selected);
+              if (comp && typeof comp.score === 'number') effectiveCompatibility = comp.score;
+            } catch {}
+          }
           return (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -559,13 +613,13 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                         </div>
                         <div>
                           <h3 className="font-semibold text-gray-900">Compatibility</h3>
-                          <p className="text-2xl font-bold text-green-600">{selectedBuild.compatibility}%</p>
+                          <p className="text-2xl font-bold text-green-600">{effectiveCompatibility}%</p>
                         </div>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
                         <div 
                           className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${selectedBuild.compatibility}%` }}
+                          style={{ width: `${effectiveCompatibility}%` }}
                         ></div>
                       </div>
                     </div>
@@ -573,11 +627,11 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                     <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-6 border border-blue-200">
                       <div className="flex items-center gap-3 mb-3">
                         <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                          <DollarSign className="w-5 h-5 text-blue-600" />
+                          <span className="text-blue-600 text-xl font-bold">₱</span>
                         </div>
                         <div>
                           <h3 className="font-semibold text-gray-900">Total Price</h3>
-                          <p className="text-2xl font-bold text-blue-600">₱{Number(selectedBuild.totalPrice || 0).toLocaleString()}</p>
+                          <p className="text-2xl font-bold text-blue-600">{formatCurrencyPHP(selectedBuild.totalPrice || 0)}</p>
                         </div>
                       </div>
                       <p className="text-sm text-gray-600">All components included</p>
@@ -644,7 +698,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                                   {component.category}
                                 </span>
                                 <span className="text-lg font-bold text-green-600">
-                                  ₱{Number(component.price || 0).toLocaleString()}
+                                  {formatCurrencyPHP(component.price || 0)}
                                 </span>
                               </div>
                               <h4 className="font-semibold text-gray-900 text-lg mb-2 line-clamp-2">

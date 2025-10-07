@@ -3,11 +3,16 @@ import { MessageSquare, X } from 'lucide-react';
 import DynamicChatAccess from './DynamicChatAccess';
 import { API_BASE } from '../utils/apiBase';
 
-const FloatingChatButton = ({ user }) => {
+const FloatingChatButton = ({ user, setCurrentPage }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [sessionId, setSessionId] = useState(() => {
-    return localStorage.getItem('builditpc_chat_session_id') || null;
+    try {
+      return localStorage.getItem('builditpc_chat_session_id') || null;
+    } catch (error) {
+      console.error('Error accessing localStorage:', error);
+      return null;
+    }
   });
 
   // Check for unread messages

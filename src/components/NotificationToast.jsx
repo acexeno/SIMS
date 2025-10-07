@@ -75,7 +75,7 @@ const NotificationToast = ({ notification, onClose, onMarkAsRead }) => {
             <h4 className="text-sm font-medium text-gray-900">
               {notification.title}
             </h4>
-            <p className="text-sm text-gray-600 mt-1">
+            <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">
               {notification.message}
             </p>
           </div>

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { API_BASE } from './utils/apiBase'
+import { ensureValidToken, authorizedFetch } from './utils/auth'
 import Sidebar from './components/Sidebar'
 import AdminSidebar from './components/AdminSidebar'
 import EmployeeSidebar from './components/EmployeeSidebar'
@@ -15,25 +16,35 @@ import AdminDashboard from './pages/AdminDashboard'
 import SuperAdminDashboard from './pages/SuperAdminDashboard'
 import EmployeeDashboard from './pages/EmployeeDashboard'
 import ScrollTestPage from './pages/ScrollTestPage'
+import About from './pages/About'
+import Contact from './pages/Contact'
+import FAQ from './pages/FAQ'
+import CompatibilityGuide from './pages/CompatibilityGuide'
+import Troubleshooting from './pages/Troubleshooting'
 import Login from './components/auth/Login'
 import Register from './components/auth/Register'
 import { NotificationProvider } from './contexts/NotificationContext'
 import NotificationManager from './components/NotificationManager'
 
 import FloatingChatButton from './components/FloatingChatButton';
-import SupplierManagement from './components/SupplierManagement';
 import './App.css'
 
 // these are the pages that need login to access
 const PROTECTED_PAGES = ['my-builds', 'my-orders', 'notifications']
 
-// check if the JWT token has expired
+// check if the JWT token has expired (supports base64url)
 function isTokenExpired(token) {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+    const part = token.split('.')[1];
+    if (!part) return true;
+    // convert base64url -> base64
+    let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const payload = JSON.parse(atob(b64));
     if (!payload.exp) return false;
     return Date.now() >= payload.exp * 1000;
   } catch {
+    // if we cannot parse, treat as expired to be safe
     return true;
   }
 }
@@ -49,7 +60,12 @@ const AppContent = () => {
     const token = localStorage.getItem('token');
     if (token) {
       try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
+        const part = token.split('.')[1];
+        if (!part) throw new Error('invalid jwt');
+        // base64url -> base64 with padding
+        let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const payload = JSON.parse(atob(b64));
         const roles = payload.roles || [];
         if (typeof roles === 'string' && roles.includes('Super Admin')) return 'super-admin-dashboard';
         if (Array.isArray(roles) && roles.includes('Super Admin')) return 'super-admin-dashboard';
@@ -106,42 +122,37 @@ const AppContent = () => {
   // check if the user's token is still valid when the app starts
   useEffect(() => {
     const verifyToken = async () => {
-      const token = localStorage.getItem('token')
-      if (!token || isTokenExpired(token)) {
-        localStorage.removeItem('token');
-        setIsLoading(false)
-        return
-      }
-
       try {
-        const response = await fetch(`${API_BASE}/index.php?endpoint=verify`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        
+        // Only attempt refresh if an access token already exists.
+        // This prevents silent sign-in using refresh_token on page reload.
+        const existing = localStorage.getItem('token')
+        if (!existing) {
+          setUser(null)
+          setIsLoading(false)
+          return
+        }
+        const fresh = await ensureValidToken(false)
+        if (!fresh) {
+          localStorage.removeItem('token')
+          setIsLoading(false)
+          return
+        }
+
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=verify`, { method: 'GET' })
         if (response.ok) {
-          const data = await response.json()
-          if (data.success) {
-            // grab the full user profile to restore everything
-            const profileResponse = await fetch(`${API_BASE}/index.php?endpoint=profile`, {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${token}`
-              }
-            })
-            
+          const data = await response.json().catch(() => ({}))
+          if (data && data.success) {
+            // Fetch profile via authorizedFetch (auto-refresh on 401)
+            const profileResponse = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { method: 'GET' })
             if (profileResponse.ok) {
-              const profileData = await profileResponse.json()
-              if (profileData.success) {
+              const profileData = await profileResponse.json().catch(() => ({}))
+              if (profileData && profileData.success) {
                 setUser(profileData.user)
               } else {
                 setUser(null)
                 localStorage.removeItem('token')
               }
             } else if (profileResponse.status === 401) {
-              // Unauthorized, remove token and do not log error
               setUser(null)
               localStorage.removeItem('token')
             }
@@ -154,11 +165,6 @@ const AppContent = () => {
           localStorage.removeItem('token')
         }
       } catch (error) {
-        // ignore 401 errors, only log the other ones
-        if (!(error && error.status === 401)) {
-          // we could log other errors here if needed
-          // console.error('Error verifying token:', error)
-        }
         setUser(null)
         localStorage.removeItem('token')
       } finally {
@@ -167,6 +173,21 @@ const AppContent = () => {
     }
 
     verifyToken()
+  }, [])
+
+  // Global listener for forced logout on 401
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setUser(null)
+      try {
+        localStorage.removeItem('token')
+        localStorage.removeItem('refresh_token')
+      } catch {}
+      // Optionally, you could navigate to login by setting the auth modal
+      setShowAuth('login')
+    }
+    window.addEventListener('auth:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized)
   }, [])
 
   // handle when user clicks on navigation items
@@ -195,6 +216,7 @@ const AppContent = () => {
   const handleLogout = () => {
     setUser(null)
     localStorage.removeItem('token'); // Remove JWT token on logout
+    localStorage.removeItem('refresh_token'); // Prevent silent re-login on reload
     localStorage.removeItem('user');
     localStorage.removeItem('builditpc_chat_session_id');
     localStorage.removeItem('builditpc_guest_name');
@@ -247,14 +269,27 @@ const AppContent = () => {
     return null
   }
 
+  // Determine whether we are on an admin/employee area page vs public storefront pages
+  const hasRoles = Array.isArray(user?.roles) ? user.roles : []
+  const isSuperAdmin = hasRoles.includes('Super Admin')
+  const isAdmin = hasRoles.includes('Admin')
+  const isEmployee = hasRoles.includes('Employee')
+  const isAdminOrEmployee = isSuperAdmin || isAdmin || isEmployee
+  const ADMIN_PAGES = new Set(['super-admin-dashboard','admin-dashboard','prebuilt-management','sales-reports','system-reports','notifications','inventory','orders-management','admin-chat-support','pc-assembly'])
+  const EMPLOYEE_PAGES = new Set(['employee-dashboard','inventory','orders-management','prebuilt-management','sales-reports','system-reports','notifications','admin-chat-support','pc-assembly'])
+  const isAdminAreaPage = (
+    ((isSuperAdmin || isAdmin) && ADMIN_PAGES.has(currentPage)) ||
+    (isEmployee && EMPLOYEE_PAGES.has(currentPage))
+  )
+
   // the main app layout
   return (
     <>
       <NotificationProvider user={user}>
         {/* layout with conditional top navigation */}
         <div className="min-h-screen bg-gray-50">
-          {/* only show top navigation for non-admin users (clients and guests) */}
-          {(!user?.roles || user?.roles?.includes('Client') || !user?.roles?.some(role => ['Super Admin', 'Admin', 'Employee'].includes(role))) && (
+          {/* Show header on public pages (home/storefront/etc.) even for admins; hide it inside admin area */}
+          {!isAdminAreaPage && (
             <TopNavigation
               currentPage={currentPage}
               onPageChange={handlePageChange}
@@ -265,8 +300,8 @@ const AppContent = () => {
             />
           )}
           
-          {/* show sidebars for admin users */}
-          {(user?.roles?.includes('Super Admin') || user?.roles?.includes('Admin') || user?.roles?.includes('Employee')) ? (
+          {/* Admin/Employee sidebars visible only on admin area pages */}
+          {(isAdminOrEmployee && isAdminAreaPage) ? (
             <div className={`grid ${isSidebarCollapsed ? 'grid-cols-[88px_1fr] md:grid-cols-[88px_1fr] xl:grid-cols-[104px_1fr]' : 'grid-cols-[288px_1fr] md:grid-cols-[288px_1fr] xl:grid-cols-[320px_1fr]'} h-screen w-full`}>
               {/* sidebar for admin users */}
               {(user?.roles?.includes('Super Admin') || user?.roles?.includes('Admin')) && (
@@ -311,11 +346,14 @@ const AppContent = () => {
                 // grab the user's chat session if they have one
                 if (u && u.id) {
                   try {
-                    const res = await fetch(`${API_BASE}/chat.php?sessions`);
+                    const token = localStorage.getItem('token');
+                    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+                    const res = await fetch(`${API_BASE}/chat.php?user_sessions&user_id=${u.id}`, { headers });
                     const data = await res.json();
-                    if (data.sessions && Array.isArray(data.sessions)) {
-                      const userSession = data.sessions.find(s => String(s.user_id) === String(u.id));
-                      if (userSession) {
+                    if (data.success && data.sessions && Array.isArray(data.sessions) && data.sessions.length > 0) {
+                      // Get the most recent session
+                      const userSession = data.sessions[0];
+                      if (userSession && userSession.id) {
                         localStorage.setItem('builditpc_chat_session_id', userSession.id);
                       }
                     }
@@ -424,16 +462,31 @@ const AppContent = () => {
                 )}
                 {currentPage === 'chat-support' && <DynamicChatAccess user={user} fullScreen={true} />}
                 {currentPage === 'scroll-test' && <ScrollTestPage />}
+                {currentPage === 'about' && <About setCurrentPage={setCurrentPage} />}
+                {currentPage === 'contact' && <Contact setCurrentPage={setCurrentPage} />}
+                {currentPage === 'faq' && <FAQ setCurrentPage={setCurrentPage} />}
+                {currentPage === 'compatibility-guide' && <CompatibilityGuide setCurrentPage={setCurrentPage} />}
+                {currentPage === 'troubleshooting' && <Troubleshooting setCurrentPage={setCurrentPage} />}
                 {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} />}
+                {currentPage === 'my-builds' && !user && (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-center">
+                      <h3 className="text-xl font-semibold text-gray-800 mb-2">Sign in required</h3>
+                      <p className="text-gray-600 mb-4">Log in to view and manage your builds.</p>
+                      <div className="flex items-center gap-2 justify-center">
+                        <button onClick={() => { setShowAuth('login'); setCurrentPage('login'); }} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">Login</button>
+                        <button onClick={() => { setShowAuth('register'); setCurrentPage('register'); }} className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md">Register</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {currentPage === 'my-orders' && user && <MyOrders setCurrentPage={setCurrentPage} />}
                 {currentPage === 'notifications' && user && !user?.roles?.includes('Admin') && !user?.roles?.includes('Employee') && <Notifications user={user} />}
                 {currentPage === 'admin-chat-support' && (user?.roles?.includes('Admin') || user?.roles?.includes('Super Admin') || user?.roles?.includes('Employee')) && (
                   <DynamicChatAccess user={user} fullScreen={true} />
                 )}
                 
-                {currentPage === 'supplier-management' && (user?.roles?.includes('Admin') || user?.roles?.includes('Super Admin')) && (
-                  <SupplierManagement user={user} />
-                )}
+                {/* SupplierManagement temporarily disabled */}
                 
                 {/* admin/employee management pages */}
                 {['inventory', 'orders-management', 'reports'].includes(currentPage) && user?.roles?.includes('Super Admin') && (
@@ -463,7 +516,7 @@ const AppContent = () => {
               </main>
             </div>
           ) : (
-            /* main content area for non-admin users (no sidebar) */
+            /* Public/main content layout (no sidebar) */
             <main className="bg-gray-50">
               {/* show login/register forms in the main area when needed */}
               {showAuth === 'login' && (
@@ -532,7 +585,24 @@ const AppContent = () => {
                   )}
                   {currentPage === 'chat-support' && <DynamicChatAccess user={user} fullScreen={true} />}
                   {currentPage === 'scroll-test' && <ScrollTestPage />}
+                  {currentPage === 'about' && <About setCurrentPage={setCurrentPage} />}
+                  {currentPage === 'contact' && <Contact setCurrentPage={setCurrentPage} />}
+                  {currentPage === 'faq' && <FAQ setCurrentPage={setCurrentPage} />}
+                  {currentPage === 'compatibility-guide' && <CompatibilityGuide setCurrentPage={setCurrentPage} />}
+                  {currentPage === 'troubleshooting' && <Troubleshooting setCurrentPage={setCurrentPage} />}
                   {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} />}
+                  {currentPage === 'my-builds' && !user && (
+                    <div className="flex items-center justify-center h-64">
+                      <div className="text-center">
+                        <h3 className="text-xl font-semibold text-gray-800 mb-2">Sign in required</h3>
+                        <p className="text-gray-600 mb-4">Log in to view and manage your builds.</p>
+                        <div className="flex items-center gap-2 justify-center">
+                          <button onClick={() => { setShowAuth('login'); setCurrentPage('login'); }} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">Login</button>
+                          <button onClick={() => { setShowAuth('register'); setCurrentPage('register'); }} className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md">Register</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {currentPage === 'my-orders' && user && <MyOrders setCurrentPage={setCurrentPage} />}
                   {currentPage === 'notifications' && user && !user?.roles?.includes('Admin') && !user?.roles?.includes('Employee') && <Notifications user={user} />}
                 </>

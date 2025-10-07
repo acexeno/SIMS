@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/apiBase'
+import { ensureValidToken, authorizedFetch } from '../utils/auth'
 
 import { 
   BarChart3, 
@@ -13,18 +14,21 @@ import {
   Eye,
   AlertTriangle,
   TrendingUp,
-  DollarSign,
   Monitor,
   Bell,
-  FileText
+  FileText,
+  X
 } from 'lucide-react'
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 import { getComponentImage } from '../utils/componentImages';
+import { formatCurrencyPHP } from '../utils/currency';
 import AdminPCAssembly from './AdminPCAssembly';
 import SuperAdminPrebuiltPCs from './SuperAdminPrebuiltPCs.jsx';
 import Notifications from './Notifications.jsx';
 import AdminReports from '../components/AdminReports';
 import SystemReports from '../components/SystemReports';
+
+// Token handling is centralized in ../utils/auth (ensureValidToken, authorizedFetch)
 
 const formalCategoryNames = {
   "Aio": "CPU Cooler (AIO)",
@@ -45,17 +49,17 @@ const formalCategoryNames = {
 };
 
 export const InventoryManagement = ({ inventory }) => (
-  <div className="space-y-6">
+  <div className="page-container space-y-6">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <h2 className="text-2xl font-bold text-gray-900">Inventory Management</h2>
-      <button className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg">
+      <h2 className="page-title">Inventory Management</h2>
+      <button className="btn btn-primary shadow">
         <Plus className="h-4 w-4" />
         Add Product
       </button>
     </div>
-    <div className="bg-white rounded-2xl shadow-lg border overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="card overflow-x-auto">
+      <table className="table-ui">
+        <thead>
           <tr>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Product</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
@@ -65,13 +69,13 @@ export const InventoryManagement = ({ inventory }) => (
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody>
           {(inventory && inventory.length > 0) ? inventory.map((item) => (
-            <tr key={item.id} className="hover:shadow-2xl">
+            <tr key={item.id}>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.name}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.category_id}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.stock_quantity || item.stock}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{item.price}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrencyPHP(item.price)}</td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                   (item.stock_quantity || item.stock) > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -80,10 +84,10 @@ export const InventoryManagement = ({ inventory }) => (
                 </span>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                <button className="text-blue-600 hover:text-blue-900">
+                <button className="btn btn-outline btn-icon">
                   <Edit className="h-4 w-4" />
                 </button>
-                <button className="text-red-600 hover:text-red-900">
+                <button className="btn btn-outline btn-icon text-red-600 border-red-200 hover:bg-red-50">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </td>
@@ -96,17 +100,17 @@ export const InventoryManagement = ({ inventory }) => (
 );
 
 export const OrdersManagement = ({ orders }) => (
-  <div className="space-y-6">
+  <div className="page-container space-y-6">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <h2 className="text-2xl font-bold text-gray-900">Orders Management</h2>
-      <button className="bg-blue-600 text-white px-5 py-2 rounded-xl hover:bg-blue-700 flex items-center gap-2 shadow-lg">
+      <h2 className="page-title">Orders Management</h2>
+      <button className="btn btn-primary shadow">
         <Plus className="h-4 w-4" />
         Add Order
       </button>
     </div>
-    <div className="bg-white rounded-2xl shadow-lg border overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="card overflow-x-auto">
+      <table className="table-ui">
+        <thead>
           <tr>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
@@ -116,12 +120,12 @@ export const OrdersManagement = ({ orders }) => (
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody>
           {(orders && orders.length > 0) ? orders.map((order) => (
-            <tr key={order.id} className="hover:shadow-2xl">
+            <tr key={order.id}>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrencyPHP(order.total_price)}</td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                   order.status === 'Completed' ? 'bg-green-100 text-green-800' :
@@ -133,10 +137,10 @@ export const OrdersManagement = ({ orders }) => (
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                <button className="text-blue-600 hover:text-blue-900">
+                <button className="btn btn-outline btn-icon">
                   <Edit className="h-4 w-4" />
                 </button>
-                <button className="text-red-600 hover:text-red-900">
+                <button className="btn btn-outline btn-icon text-red-600 border-red-200 hover:bg-red-50">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </td>
@@ -154,10 +158,10 @@ export const Reports = ({ reports, orders }) => (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-white p-6 rounded-2xl shadow-lg border">
                 <div className="flex items-center">
-                    <div className="p-2 bg-green-100 rounded-lg"><DollarSign className="h-6 w-6 text-green-600" /></div>
+                    <div className="p-2 bg-green-100 rounded-lg"><span className="text-green-600 text-xl font-bold">₱</span></div>
                     <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Total Sales</p>
-                        <p className="text-2xl font-bold text-gray-900">₱{reports.totalSales?.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(reports.totalSales)}</p>
                     </div>
                 </div>
             </div>
@@ -183,7 +187,7 @@ export const Reports = ({ reports, orders }) => (
                             <tr key={order.id} className="hover:shadow-2xl">
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrencyPHP(order.total_price)}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                                         order.status === 'Completed' ? 'bg-green-100 text-green-800' :
@@ -203,6 +207,198 @@ export const Reports = ({ reports, orders }) => (
     </div>
 );
 
+// Feedback Management Component
+const FeedbackTab = () => {
+  const [feedback, setFeedback] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedFeedback, setSelectedFeedback] = useState(null);
+
+  useEffect(() => {
+    fetchFeedback();
+  }, []);
+
+  const fetchFeedback = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/view_feedback.php`);
+      const data = await response.json();
+      if (data.success) {
+        setFeedback(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching feedback:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'new': return 'bg-blue-100 text-blue-800';
+      case 'in_progress': return 'bg-yellow-100 text-yellow-800';
+      case 'resolved': return 'bg-green-100 text-green-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Loading feedback...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-gray-900">Contact Feedback</h2>
+        <button
+          onClick={fetchFeedback}
+          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {feedback.length === 0 ? (
+        <div className="text-center py-12">
+          <MessageSquare className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No feedback received</h3>
+          <p className="text-gray-600">Contact form submissions will appear here.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {feedback.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {item.name}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.email}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.subject}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {item.rating > 0 ? `${item.rating}/5 ⭐` : 'No rating'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(item.status)}`}>
+                        {item.status.replace('_', ' ').toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(item.created_at)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => setSelectedFeedback(item)}
+                        className="text-green-600 hover:text-green-900 mr-3"
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback Detail Modal */}
+      {selectedFeedback && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-semibold text-gray-900">Feedback Details</h3>
+                <button
+                  onClick={() => setSelectedFeedback(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Name</label>
+                  <p className="mt-1 text-sm text-gray-900">{selectedFeedback.name}</p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <p className="mt-1 text-sm text-gray-900">{selectedFeedback.email}</p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Subject</label>
+                  <p className="mt-1 text-sm text-gray-900">{selectedFeedback.subject}</p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Rating</label>
+                  <p className="mt-1 text-sm text-gray-900">
+                    {selectedFeedback.rating > 0 ? `${selectedFeedback.rating}/5 ⭐` : 'No rating provided'}
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Message</label>
+                  <div className="mt-1 p-3 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-900 whitespace-pre-wrap">{selectedFeedback.message}</p>
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Submitted</label>
+                  <p className="mt-1 text-sm text-gray-900">{formatDate(selectedFeedback.created_at)}</p>
+                </div>
+              </div>
+              
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setSelectedFeedback(null)}
+                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminDashboard = ({ initialTab, user }) => {
   const [activeTab, setActiveTab] = useState(initialTab || 'dashboard')
   const [inventory, setInventory] = useState([])
@@ -214,9 +410,59 @@ const AdminDashboard = ({ initialTab, user }) => {
   const [error, setError] = useState(null)
   const [dashboardSalesChartType, setDashboardSalesChartType] = useState('monthly')
   const [categories, setCategories] = useState([]);
+  const [feedback, setFeedback] = useState([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // Fetch feedback submissions
+  const fetchFeedback = async () => {
+    setFeedbackLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/view_feedback.php`);
+      const data = await response.json();
+      if (data.success) {
+        setFeedback(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching feedback:', error);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
   const [modalItem, setModalItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [deadstockPeriod, setDeadstockPeriod] = useState(90);
+  // Local edits for order statuses
+  const [orderStatusEdits, setOrderStatusEdits] = useState({});
+  // Branch filter: null = All (global totals), or 'BULACAN' / 'MARIKINA'
+  const [branch, setBranch] = useState(null);
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('You must be logged in to update order status.');
+        return;
+      }
+      const res = await fetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Failed to update order');
+      }
+      // Reflect change in local state
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+      setOrderStatusEdits(prev => ({ ...prev, [orderId]: undefined }));
+    } catch (e) {
+      console.error(e);
+      alert(`Update failed: ${e.message}`);
+    }
+  };
 
   useEffect(() => {
     if (initialTab && initialTab !== activeTab) {
@@ -229,12 +475,13 @@ const AdminDashboard = ({ initialTab, user }) => {
       setIsLoading(true);
       setError(null);
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=dashboard&period=${deadstockPeriod}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+        let token = await ensureValidToken();
+        if (!token) {
+          setError('Session expired. Please log in again.');
+          setIsLoading(false);
+          return;
+        }
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=dashboard&period=${deadstockPeriod}${branch ? `&branch=${branch}` : ''}`);
 
         const text = await response.text();
         let result;
@@ -262,36 +509,40 @@ const AdminDashboard = ({ initialTab, user }) => {
     };
 
     fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    // Refetch dashboard data when deadstockPeriod changes
-    const token = localStorage.getItem('token');
-    fetch(`${API_BASE}/index.php?endpoint=dashboard&period=${deadstockPeriod}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
+    // Refetch dashboard data when deadstockPeriod or branch changes
+    (async () => {
+      const token = await ensureValidToken();
+      if (!token) {
+        setError('Session expired. Please log in again.');
+        return;
       }
-    })
-      .then(res => res.text())
-      .then(text => {
-        let result;
-        try {
-          result = JSON.parse(text);
-        } catch {
-          setError('Server returned invalid JSON.');
-          return;
-        }
-        if (result.success) {
-          const data = result.data;
-          setInventory(data.inventory || []);
-          setOrders(data.orders || []);
-          setReports(data.reports || {});
-        } else {
-          setError(result.error || 'API call was not successful');
-        }
-      })
-      .catch(() => setError('Error fetching dashboard data.'));
-  }, [deadstockPeriod]);
+      authorizedFetch(`${API_BASE}/index.php?endpoint=dashboard&period=${deadstockPeriod}${branch ? `&branch=${branch}` : ''}`)
+        .then(res => res.text())
+        .then(text => {
+          let result;
+          try {
+            result = JSON.parse(text);
+          } catch {
+            setError('Server returned invalid JSON.');
+            return;
+          }
+          if (result.success) {
+            const data = result.data;
+            setInventory(data.inventory || []);
+            setOrders(data.orders || []);
+            setReports(data.reports || {});
+          } else {
+            setError(result.error || 'API call was not successful');
+          }
+        })
+        .catch(() => setError('Error fetching dashboard data.'));
+    })();
+  }, [deadstockPeriod, branch]);
 
   useEffect(() => {
     // Fetch categories for inventory display
@@ -366,7 +617,7 @@ const AdminDashboard = ({ initialTab, user }) => {
       <div className="space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white p-6 rounded-2xl shadow-lg border">
+          <div className="card p-6">
             <div className="flex items-center">
               <div className="p-3 bg-green-100 rounded-lg flex items-center justify-center">
                 <span className="text-2xl font-extrabold text-green-600">₱</span>
@@ -377,7 +628,7 @@ const AdminDashboard = ({ initialTab, user }) => {
               </div>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-2xl shadow-lg border">
+          <div className="card p-6">
             <div className="flex items-center">
               <div className="p-3 bg-yellow-100 rounded-lg">
                 <Package className="h-6 w-6 text-yellow-600" />
@@ -396,7 +647,7 @@ const AdminDashboard = ({ initialTab, user }) => {
               </div>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-2xl shadow-lg border">
+          <div className="card p-6">
             <div className="flex items-center">
               <div className="p-3 bg-blue-100 rounded-lg">
                 <TrendingUp className="h-6 w-6 text-blue-600" />
@@ -427,16 +678,16 @@ const AdminDashboard = ({ initialTab, user }) => {
           </div>
         </div>
         {/* Sales Chart */}
-        <div className="bg-white rounded-2xl shadow-lg border p-6 mb-8">
+        <div className="card p-6 mb-8">
           <h4 className="text-lg font-semibold text-gray-900 mb-4">{dashboardSalesChartTitle}</h4>
           {dashboardSalesChartComponent}
         </div>
         {/* Recent Orders */}
-        <div className="bg-white rounded-2xl shadow-lg border p-6">
+        <div className="card p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Orders</h3>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="table-ui">
+              <thead>
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
                   <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer ID</th>
@@ -445,9 +696,9 @@ const AdminDashboard = ({ initialTab, user }) => {
                   <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody>
                 {(orders && orders.length > 0) ? orders.slice(0, 5).map((order) => (
-                  <tr key={order.id} className="hover:shadow-2xl">
+                  <tr key={order.id}>
                     <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
@@ -552,15 +803,38 @@ const AdminDashboard = ({ initialTab, user }) => {
     return (
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h2 className="text-2xl font-bold text-gray-900">Inventory Management</h2>
-            {/* Admin and Superadmin can create */}
-            <button
-              className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg"
-              onClick={() => setEditItem({})}
-            >
-              <Plus className="h-4 w-4" />
-              Add Product
-            </button>
+          <h2 className="page-title">Inventory Management</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Branch:</span>
+            <div className="inline-flex rounded-lg border overflow-hidden">
+              <button
+                className={`px-3 py-1 text-sm ${branch === null ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setBranch(null)}
+              >
+                All
+              </button>
+              <button
+                className={`px-3 py-1 text-sm border-l ${branch === 'BULACAN' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setBranch('BULACAN')}
+              >
+                Bulacan
+              </button>
+              <button
+                className={`px-3 py-1 text-sm border-l ${branch === 'MARIKINA' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setBranch('MARIKINA')}
+              >
+                Marikina
+              </button>
+            </div>
+          </div>
+          {/* Admin and Superadmin can create */}
+          <button
+            className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg"
+            onClick={() => setEditItem({})}
+          >
+            <Plus className="h-4 w-4" />
+            Add Product
+          </button>
         </div>
         {/* Search, Filter, Sort Controls */}
         <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between mb-2">
@@ -634,7 +908,7 @@ const AdminDashboard = ({ initialTab, user }) => {
                         alt={item.name}
                         className="w-14 h-14 object-contain rounded border cursor-pointer hover:shadow-lg transition duration-150"
                         onClick={() => setModalItem(item)}
-                        onError={e => { e.target.onerror = null; e.target.src = '/images/components/default.png'; }}
+                        onError={e => { e.target.onerror = null; e.target.src = '/images/placeholder-component.png'; }}
                       />
                     </td>
                     <td className="px-2 py-4 whitespace-normal text-sm font-medium text-gray-900 break-words max-w-md flex items-center gap-3 truncate" style={{ maxWidth: '320px' }} title={item.name}>
@@ -768,7 +1042,7 @@ const AdminDashboard = ({ initialTab, user }) => {
   const OrdersTab = () => (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Orders Management</h2>
+        <h2 className="page-title">Orders Management</h2>
         <button className="bg-blue-600 text-white px-5 py-2 rounded-xl hover:bg-blue-700 flex items-center gap-2 shadow-lg">
           <Plus className="h-4 w-4" />
           Add Order
@@ -786,35 +1060,51 @@ const AdminDashboard = ({ initialTab, user }) => {
               <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {(orders && orders.length > 0) ? orders.map((order) => (
-              <tr key={order.id} className="hover:shadow-2xl">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    order.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                    order.status === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {order.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  <button className="text-blue-600 hover:text-blue-900">
-                    <Edit className="h-4 w-4" />
-                  </button>
-                  <button className="text-red-600 hover:text-red-900">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </td>
-              </tr>
-            )) : <tr><td colSpan="6" className="text-center py-4">No order data available.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {(orders && orders.length > 0) ? orders.slice(0, 5).map((order) => (
+                <tr key={order.id} className="hover:shadow-2xl">
+                  <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="border rounded px-2 py-1 text-xs"
+                        value={orderStatusEdits[order.id] ?? order.status}
+                        onChange={(e) => setOrderStatusEdits(prev => ({ ...prev, [order.id]: e.target.value }))}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Processing">Processing</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                      <button
+                        className="text-xs px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                        onClick={() => updateOrderStatus(order.id, orderStatusEdits[order.id] ?? order.status)}
+                        title="Update Status"
+                      >
+                        Update
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm font-medium space-x-2">
+                    <button
+                      className="text-blue-600 hover:text-blue-900"
+                      onClick={() => setEditItem(order)}
+                      title="Edit"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button className="text-red-600 hover:text-red-900">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              )) : <tr><td colSpan="6" className="text-center py-4">No order data available.</td></tr>}
+            </tbody>
+          </table>
+        </div>
     </div>
   )
 
@@ -823,7 +1113,7 @@ const AdminDashboard = ({ initialTab, user }) => {
   );
 
   const PrebuiltManagementTab = () => (
-    <SuperAdminPrebuiltPCs />
+    <SuperAdminPrebuiltPCs user={user} />
   );
 
   const renderContent = () => {
@@ -835,6 +1125,8 @@ const AdminDashboard = ({ initialTab, user }) => {
       case 'orders':
       case 'orders-management':
         return <OrdersTab />
+      case 'feedback':
+        return <FeedbackTab />
       case 'pc-assembly':
         return <PCTab />
       case 'prebuilt-management':
@@ -854,6 +1146,7 @@ const AdminDashboard = ({ initialTab, user }) => {
     { id: 'dashboard', name: 'Dashboard', icon: <BarChart3 className="h-5 w-5" /> },
     { id: 'inventory', name: 'Inventory', icon: <Package className="h-5 w-5" /> },
     { id: 'orders', name: 'Orders', icon: <TrendingUp className="h-5 w-5" /> },
+    { id: 'feedback', name: 'Contact Feedback', icon: <MessageSquare className="h-5 w-5" /> },
     { id: 'pc-assembly', name: 'PC Assembly', icon: <Package className="h-5 w-5" /> },
     { id: 'prebuilt-management', name: 'Prebuilt Management', icon: <Monitor className="h-5 w-5" /> },
     { id: 'notifications', name: 'Notifications', icon: <Bell className="h-5 w-5" /> },
@@ -886,8 +1179,36 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     category_id: item.category_id || (categories[0] && categories[0].id) || ''
   });
   const [saving, setSaving] = React.useState(false);
+  const [branchStocks, setBranchStocks] = React.useState({ BULACAN: '', MARIKINA: '' });
+  const [loadingBranch, setLoadingBranch] = React.useState(false);
 
   const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  // Load existing per-branch stock when editing
+  React.useEffect(() => {
+    const load = async () => {
+      if (!form.id) return;
+      setLoadingBranch(true);
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/index.php?endpoint=component_stock&component_id=${form.id}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data && data.success && data.data && Array.isArray(data.data.branches)) {
+          const map = { BULACAN: '', MARIKINA: '' };
+          data.data.branches.forEach(b => {
+            if (String(b.code).toUpperCase() === 'BULACAN') map.BULACAN = String(b.stock_quantity ?? '');
+            if (String(b.code).toUpperCase() === 'MARIKINA') map.MARIKINA = String(b.stock_quantity ?? '');
+          });
+          setBranchStocks(map);
+        }
+      } catch {}
+      setLoadingBranch(false);
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -901,11 +1222,34 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
         body: JSON.stringify(form)
       });
       const result = await res.json();
-      if (result.success) {
-        onSave(result.data || form);
-      } else {
+      if (!result.success) {
         alert(result.error || 'Save failed');
+        setSaving(false);
+        return;
       }
+      // After base save, update per-branch stocks if provided
+      let saved = result.data || { ...form, id: form.id || (result.data && result.data.id) };
+      const compId = saved.id || form.id;
+      const toInt = v => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10);
+      const bul = toInt(branchStocks.BULACAN);
+      const mar = toInt(branchStocks.MARIKINA);
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+      const calls = [];
+      if (compId) {
+        if (bul !== null && !Number.isNaN(bul)) {
+          calls.push(fetch(`${API_BASE}/update_component_stock.php`, { method: 'POST', headers, body: JSON.stringify({ component_id: compId, branch: 'BULACAN', stock_quantity: bul }) }));
+        }
+        if (mar !== null && !Number.isNaN(mar)) {
+          calls.push(fetch(`${API_BASE}/update_component_stock.php`, { method: 'POST', headers, body: JSON.stringify({ component_id: compId, branch: 'MARIKINA', stock_quantity: mar }) }));
+        }
+      }
+      if (calls.length) {
+        await Promise.allSettled(calls);
+        // Update total shown in table
+        const total = (Number.isFinite(bul) ? bul : 0) + (Number.isFinite(mar) ? mar : 0);
+        saved = { ...saved, stock_quantity: total };
+      }
+      onSave(saved);
     } catch (err) {
       console.error(err);
       alert('Error saving item');
@@ -934,6 +1278,19 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
           <input type="number" value={form.stock_quantity} onChange={e => handleChange('stock_quantity', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
         </div>
       </div>
+      {/* Per-branch stock editors (optional) */}
+      {form.id && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Bulacan Stock</label>
+            <input type="number" value={branchStocks.BULACAN} onChange={e => setBranchStocks(s => ({ ...s, BULACAN: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" disabled={loadingBranch} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Marikina Stock</label>
+            <input type="number" value={branchStocks.MARIKINA} onChange={e => setBranchStocks(s => ({ ...s, MARIKINA: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" disabled={loadingBranch} />
+          </div>
+        </div>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-700">Category</label>
         <select value={form.category_id} onChange={e => handleChange('category_id', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2">

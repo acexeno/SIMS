@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../utils/apiBase'
 import { Search, Filter, Eye, Plus, CheckCircle, AlertTriangle, ArrowRight, Package } from 'lucide-react'
 import { getComponentImage } from '../utils/componentImages'
+import { formatCurrencyPHP } from '../utils/currency';
 
 // Helper function to determine component type from component data
 const getComponentType = (component) => {
@@ -265,7 +266,7 @@ const ComponentSelector = ({
                               <h5 className="text-sm font-semibold text-gray-900 truncate">{rec.name}</h5>
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-sm font-bold text-green-600">
-                                  {rec.price_formatted || `₱${parseFloat(rec.price).toLocaleString()}`}
+                                  {rec.price_formatted || formatCurrencyPHP(rec.price)}
                                 </span>
                                 {rec.stock_quantity > 0 && (
                                   <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
@@ -338,7 +339,7 @@ const ComponentSelector = ({
               <div>
                 <h3 className="font-semibold text-green-900">Currently Selected</h3>
                 <p className="text-green-700">{selectedComponent.name}</p>
-                <p className="text-sm text-green-600">₱{selectedComponent.price.toLocaleString()}</p>
+                <p className="text-sm text-green-600">{formatCurrencyPHP(selectedComponent.price)}</p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -387,7 +388,7 @@ const ComponentSelector = ({
                   <h3 className="font-semibold text-gray-900 text-lg mb-1">{component.name}</h3>
                   <p className="text-sm text-gray-600 mb-2">{component.brand}</p>
                   <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold text-green-600">₱{component.price.toLocaleString()}</span>
+                    <span className="text-2xl font-bold text-green-600">{formatCurrencyPHP(component.price)}</span>
                     <span className="text-sm text-gray-500">Stock: {component.stock_quantity}</span>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 import React from 'react'
 import { X, Star, CheckCircle, Package, Zap, HardDrive, Cpu, Monitor, MemoryStick, Server, Thermometer } from 'lucide-react'
 import { getComponentImage } from '../utils/componentImages'
+import { formatCurrencyPHP } from '../utils/currency'
 
 const categoryMapping = {
   cpu: 'CPU',
@@ -127,8 +128,9 @@ const ComponentPreview = ({ component, onClose }) => {
               {/* Price */}
               <div className="text-center bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-6 border border-green-200">
                 <span className="text-4xl font-bold text-green-600">
-                  ₱{component.price?.toLocaleString()}
+                  {formatCurrencyPHP(component.price)}
                 </span>
+
                 <p className="text-sm text-gray-600 mt-2">Free shipping • In stock</p>
                 <div className="flex items-center justify-center gap-1 mt-2">
                   <CheckCircle className="w-4 h-4 text-green-500" />

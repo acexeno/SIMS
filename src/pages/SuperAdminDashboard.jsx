@@ -10,7 +10,6 @@ import {
   Edit,
   Trash2,
   TrendingUp,
-  DollarSign,
   Database,
   Activity,
   Package,
@@ -30,13 +29,14 @@ import {
 } from 'lucide-react'
 import { useNotifications } from '../contexts/NotificationContext'
 import { getComponentImage } from '../utils/componentImages'
+import { formatCurrencyPHP } from '../utils/currency'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts'
 import SuperAdminPrebuiltPCs from './SuperAdminPrebuiltPCs.jsx'
 import SuperAdminPCAssembly from './SuperAdminPCAssembly.jsx'
 import AdminReports from '../components/AdminReports';
-import SupplierManagement from '../components/SupplierManagement';
+// SupplierManagement temporarily disabled
 import SystemReports from '../components/SystemReports';
 
 const formalCategoryNames = {
@@ -56,6 +56,79 @@ const formalCategoryNames = {
   "Motherboard": "Motherboard",
   "CPU": "Processor (CPU)"
 };
+
+// Shared EditForm used by Super Admin inventory modal
+function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = () => {} }) {
+  const [form, setForm] = React.useState({
+    id: item.id || null,
+    name: item.name || '',
+    brand: item.brand || '',
+    price: item.price || 0,
+    stock_quantity: item.stock_quantity ?? item.stock ?? 0,
+    category_id: item.category_id || (categories[0] && categories[0].id) || ''
+  });
+  const [saving, setSaving] = React.useState(false);
+
+  const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('token');
+      const endpoint = form.id ? 'update_component' : 'create_component';
+      const res = await fetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(form)
+      });
+      const result = await res.json();
+      if (result.success) {
+        onSave(result.data || form);
+      } else {
+        alert(result.error || 'Save failed');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error saving item');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Name</label>
+        <input required value={form.name} onChange={e => handleChange('name', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Brand</label>
+        <input value={form.brand} onChange={e => handleChange('brand', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Price</label>
+          <input type="number" step="0.01" value={form.price} onChange={e => handleChange('price', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Stock Quantity</label>
+          <input type="number" value={form.stock_quantity} onChange={e => handleChange('stock_quantity', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Category</label>
+        <select value={form.category_id} onChange={e => handleChange('category_id', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2">
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded">Cancel</button>
+        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+    </form>
+  );
+}
 
 const PesoSign = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -152,16 +225,16 @@ const InventoryManagement = ({ inventory, categories, user }) => {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="page-container space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Inventory Management</h2>
-        <button className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg">
+        <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Inventory Management</h2>
+        <button className="btn btn-primary shadow">
           <Plus className="h-4 w-4" />
           Add Product
         </button>
       </div>
       {/* Search, Filter, Sort Controls */}
-      <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between mb-2">
+      <div className="card flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
         <div className="flex gap-2 flex-1">
           <input
             type="text"
@@ -206,24 +279,24 @@ const InventoryManagement = ({ inventory, categories, user }) => {
           </select>
         </div>
       </div>
-      <div className="bg-white rounded-2xl shadow-lg border divide-gray-200 overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="card overflow-x-auto">
+        <table className="table-ui">
+          <thead>
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-2 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
-              <th className="px-2 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Stock</th>
-              <th className="px-2 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Price</th>
-              <th className="px-2 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-2 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+              <th>Product</th>
+              <th>Category</th>
+              <th>Stock</th>
+              <th>Price</th>
+              <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody>
             {filtered.length > 0 ? filtered.map((item) => {
               const imgSrc = getComponentImage(item.name);
               return (
                 <tr key={item.id}>
-                  <td className="px-6 py-4 whitespace-normal text-sm font-medium text-gray-900 break-words max-w-xs flex items-center gap-3" style={{ maxWidth: '320px' }} title={item.name}>
+                  <td className="text-sm font-medium text-gray-900 break-words max-w-xs flex items-center gap-3" style={{ maxWidth: '320px' }} title={item.name}>
                     <img
                       src={imgSrc}
                       alt={item.name}
@@ -233,34 +306,34 @@ const InventoryManagement = ({ inventory, categories, user }) => {
                     />
                     <span className="align-middle">{item.name}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{getMainCategoryKey(item)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.stock_quantity ?? item.stock}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{item.price}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="text-sm text-gray-900">{getMainCategoryKey(item)}</td>
+                  <td className="text-sm text-gray-900">{item.stock_quantity ?? item.stock}</td>
+                  <td className="text-sm text-gray-900">₱{item.price}</td>
+                  <td>
                     {(() => {
                       const stock = item.stock_quantity ?? item.stock;
                       const price = Number(item.price);
                       if (stock === 0) {
-                        return <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">Out of Stock</span>;
+                        return <span className="chip chip-red">Out of Stock</span>;
                       } else if (price === 0) {
-                        return <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-800">No Price</span>;
+                        return <span className="chip chip-gray">No Price</span>;
                       } else if (stock > 0 && stock <= 5) {
-                        return <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">Low Stock</span>;
+                        return <span className="chip chip-yellow">Low Stock</span>;
                       } else {
-                        return <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">In Stock</span>;
+                        return <span className="chip chip-green">In Stock</span>;
                       }
                     })()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                  <td className="text-sm font-medium space-x-2">
                     <button
-                      className="text-blue-600 hover:text-blue-900"
+                      className="btn btn-outline btn-icon"
                       onClick={() => setEditItem(item)}
                       title="Edit"
                     >
                       <Edit className="h-4 w-4" />
                     </button>
                     <button
-                      className="text-red-600 hover:text-red-900"
+                      className="btn btn-outline btn-icon text-red-600 border-red-200 hover:bg-red-50"
                       onClick={async () => {
                         if (!window.confirm(`Delete '${item.name}'?`)) return;
                         try {
@@ -289,7 +362,7 @@ const InventoryManagement = ({ inventory, categories, user }) => {
                   </td>
                 </tr>
               );
-            }) : <tr><td colSpan="6" className="text-center py-4">No inventory data available.</td></tr>}
+            }) : <tr><td colSpan="6" className="empty-state">No inventory data available.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -363,52 +436,53 @@ const InventoryManagement = ({ inventory, categories, user }) => {
 };
 
 const OrdersManagement = ({ orders }) => (
-  <div className="space-y-6">
+  <div className="page-container space-y-6">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <h2 className="text-2xl font-bold text-gray-900">Orders Management</h2>
-      <button className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg">
+      <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Orders Management</h2>
+      <button className="btn btn-primary shadow">
         <Plus className="h-4 w-4" />
         Add Order
       </button>
     </div>
-    <div className="bg-white rounded-2xl shadow-lg border divide-gray-200 overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="card overflow-x-auto">
+      <table className="table-ui">
+        <thead>
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+            <th>Order ID</th>
+            <th>Customer</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th>Date</th>
+            <th>Actions</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody>
           {(orders && orders.length > 0) ? orders.map((order) => (
             <tr key={order.id}>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                  order.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                  order.status === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-gray-100 text-gray-800'
-                }`}>
-                  {order.status}
-                </span>
+              <td className="text-sm font-semibold text-gray-900">#{order.id}</td>
+              <td className="text-sm text-gray-900">{order.user_id}</td>
+              <td className="text-sm text-gray-900">₱{order.total_price}</td>
+              <td>
+                <span className={`chip ${
+                  order.status === 'Completed' ? 'chip-green' :
+                  order.status === 'Processing' ? 'chip-yellow' : 'chip-gray'
+                }`}>{order.status}</span>
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                <button className="text-blue-600 hover:text-blue-900">
+              <td className="text-sm text-gray-900">{order.order_date}</td>
+              <td className="text-sm font-medium space-x-2">
+                <button className="btn btn-outline btn-icon">
                   <Edit className="h-4 w-4" />
                 </button>
-                <button className="text-red-600 hover:text-red-900">
+                <button className="btn btn-outline btn-icon text-red-600 border-red-200 hover:bg-red-50">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </td>
             </tr>
-          )) : <tr><td colSpan="6" className="text-center py-4">No order data available.</td></tr>}
+          )) : (
+            <tr>
+              <td colSpan="6" className="empty-state">No order data available.</td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -463,7 +537,7 @@ const SuperAdminNotifications = () => {
             <Bell className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
+            <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Notifications</h1>
             <p className="text-sm text-gray-500">
               {unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}
             </p>
@@ -535,23 +609,13 @@ const SuperAdminNotifications = () => {
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <h3 className={`text-sm font-medium ${!n.read ? 'text-gray-900' : 'text-gray-700'}`}>{n.title}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{n.message}</p>
+                        {!grouped && <p className="text-sm text-gray-600 mt-1">{n.message}</p>}
                         {grouped && components.length > 0 && (
-                          <div className="mt-2">
-                            <button
-                              className="text-xs text-red-600 underline hover:text-red-800 font-semibold mb-1"
-                              onClick={() => setExpanded(prev => ({ ...prev, [n.id]: !prev[n.id] }))}
-                            >
-                              {expanded[n.id] ? 'Hide Details' : 'Show Details'}
-                            </button>
-                            {expanded[n.id] && (
-                              <ul className="list-disc list-inside text-xs text-gray-700 bg-red-50 rounded p-2 border border-red-100 mt-1">
-                                {components.map((comp, idx) => (
-                                  <li key={idx}>{comp}</li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
+                          <ul className="mt-2 list-disc list-inside text-xs text-gray-700 bg-red-50 rounded p-2 border border-red-100">
+                            {components.map((comp, idx) => (
+                              <li key={idx}>{comp}</li>
+                            ))}
+                          </ul>
                         )}
                         <div className="flex items-center mt-2 text-xs text-gray-500">
                           {n.timestamp && (new Date(n.timestamp)).toLocaleString()}
@@ -910,93 +974,324 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
       }
     };
 
-    // ... rest of the code remains the same ...
-
-  const EditForm = ({ item = {}, categories = [], onCancel = () => {}, onSave = () => {} }) => {
-    const [form, setForm] = React.useState({
-      id: item.id || null,
-      name: item.name || '',
-      brand: item.brand || '',
-      price: item.price || 0,
-      stock_quantity: item.stock_quantity ?? item.stock ?? 0,
-      category_id: item.category_id || (categories[0] && categories[0].id) || ''
-    });
-    const [saving, setSaving] = React.useState(false);
-
-    const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-    const handleSubmit = async (e) => {
-      e.preventDefault();
-      setSaving(true);
-      try {
-        const token = localStorage.getItem('token');
-        const endpoint = form.id ? 'update_component' : 'create_component';
-        const res = await fetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify(form)
-        });
-        const result = await res.json();
-        if (result.success) {
-          onSave(result.data || form);
-        } else {
-          alert(result.error || 'Save failed');
-        }
-      } catch (err) {
-        console.error(err);
-        alert('Error saving item');
-      } finally {
-        setSaving(false);
-      }
-    };
-
-    // ... rest of the code remains the same ...
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Name</label>
-        <input required value={form.name} onChange={e => handleChange('name', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Brand</label>
-        <input value={form.brand} onChange={e => handleChange('brand', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Price</label>
-          <input type="number" step="0.01" value={form.price} onChange={e => handleChange('price', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Stock Quantity</label>
-          <input type="number" value={form.stock_quantity} onChange={e => handleChange('stock_quantity', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Category</label>
-        <select value={form.category_id} onChange={e => handleChange('category_id', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2">
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded">Cancel</button>
-        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
-      </div>
-    </form>
-  );
-}; // Close EditForm
-
-    // End of EditForm
-
-    // Temporarily return null for UserManagement to keep compile integrity
-    return null;
+  // Temporarily return null for UserManagement to keep compile integrity
+  return null;
   };
 
-  // Fallback simple content to avoid runtime errors due to partial file
+  // Main render (replacing temporary fallback)
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'notifications':
+        return <SuperAdminNotifications />;
+      case 'system-reports':
+        return <SystemReports reports={adminReports} />;
+      case 'inventory':
+        return <InventoryManagement inventory={inventory} categories={categories} user={user} />;
+      case 'orders-management':
+        return <OrdersManagement orders={orders} />;
+      // case 'supplier-management':
+      //   return <SupplierManagement user={user} />;
+      case 'pc-assembly':
+        return (
+          <SuperAdminPCAssembly
+            user={user}
+            setUser={() => {}}
+          />
+        );
+      case 'prebuilt-management':
+        return <SuperAdminPrebuiltPCs />;
+      case 'user-management':
+        // Placeholder until full UserManagement UI is wired back
+        return (
+          <div className="p-6 space-y-6">
+            {/* Header styled like Supplier Management */}
+            <div className="flex items-center gap-4">
+              <Users className="h-10 w-10 text-indigo-500" />
+              <div>
+                <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">User Management</h2>
+                <p className="text-gray-500 text-base mt-1">Create and manage users, roles, status, and access permissions.</p>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-600">Total users: {Array.isArray(users) ? users.length : 0}</div>
+              <button className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl hover:bg-indigo-700 transition-colors shadow-lg hover:shadow-xl flex items-center gap-2 font-semibold" onClick={() => setShowCreateUserModal(true)}>
+                <UserPlus className="h-4 w-4" />
+                Create User
+              </button>
+            </div>
+
+            {/* Users Table */}
+            <div className="card overflow-x-auto">
+              <table className="table-ui">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Roles</th>
+                    <th>Online</th>
+                    <th>Status</th>
+                    <th>Inventory</th>
+                    <th>Orders</th>
+                    <th>Chat Support</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.isArray(users) && users.length > 0 ? users.map((u) => (
+                    <tr key={u.id}>
+                      <td className="text-sm font-medium text-gray-900">
+                        {u.username || `User #${u.id}`}
+                        <div className="text-xs text-gray-500">{[u.first_name, u.last_name].filter(Boolean).join(' ')}</div>
+                      </td>
+                      <td className="text-sm text-gray-900">{u.email}</td>
+                      <td className="text-sm text-gray-900">
+                        {(Array.isArray(u.roles) ? u.roles : (typeof u.roles === 'string' ? u.roles.split(',') : []))
+                          .map(r => r.trim()).filter(Boolean).map((r, idx) => (
+                            <span key={idx} className="inline-block bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full text-xs font-semibold mr-1 mb-1">{r}</span>
+                          ))}
+                      </td>
+                      <td>
+                        {(() => {
+                          const last = u.last_login ? new Date(u.last_login) : null;
+                          const isOnline = !!(last && (Date.now() - last.getTime()) <= 30 * 60 * 1000);
+                          return (
+                            <span className={`chip ${isOnline ? 'chip-green' : 'chip-gray'}`}>{isOnline ? 'Online' : 'Offline'}</span>
+                          );
+                        })()}
+                      </td>
+                      <td>
+                        <span className={`chip ${u.is_active ? 'chip-green' : 'chip-red'}`}>{u.is_active ? 'Active' : 'Disabled'}</span>
+                      </td>
+                      <td>
+                        {(() => {
+                          const active = Number(u.can_access_inventory) === 1;
+                          return (
+                            <button
+                              className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${active ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                              onClick={() => {
+                                const action = active ? 'disable' : 'enable';
+                                const name = u.username || `User #${u.id}`;
+                                if (typeof window === 'undefined' || window.confirm(`Are you sure you want to ${action} Inventory access for ${name}?`)) {
+                                  handleToggleInventoryAccess(u.id, active);
+                                }
+                              }}
+                              title={active ? 'Disable Inventory Access' : 'Enable Inventory Access'}
+                            >
+                              {active ? 'Disable' : 'Enable'}
+                            </button>
+                          );
+                        })()}
+                      </td>
+                      <td>
+                        {(() => {
+                          const active = Number(u.can_access_orders) === 1;
+                          return (
+                            <button
+                              className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${active ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                              onClick={() => {
+                                const action = active ? 'disable' : 'enable';
+                                const name = u.username || `User #${u.id}`;
+                                if (typeof window === 'undefined' || window.confirm(`Are you sure you want to ${action} Orders access for ${name}?`)) {
+                                  handleToggleOrderAccess(u.id, active);
+                                }
+                              }}
+                              title={active ? 'Disable Orders Access' : 'Enable Orders Access'}
+                            >
+                              {active ? 'Disable' : 'Enable'}
+                            </button>
+                          );
+                        })()}
+                      </td>
+                      <td>
+                        {(() => {
+                          const active = Number(u.can_access_chat_support) === 1;
+                          return (
+                            <button
+                              className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${active ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                              onClick={() => {
+                                const action = active ? 'disable' : 'enable';
+                                const name = u.username || `User #${u.id}`;
+                                if (typeof window === 'undefined' || window.confirm(`Are you sure you want to ${action} Chat Support access for ${name}?`)) {
+                                  handleToggleChatSupportAccess(u.id, active);
+                                }
+                              }}
+                              title={active ? 'Disable Chat Support' : 'Enable Chat Support'}
+                            >
+                              {active ? 'Disable' : 'Enable'}
+                            </button>
+                          );
+                        })()}
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan="7" className="empty-state">No users found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Create User Modal */}
+            {showCreateUserModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowCreateUserModal(false)}>
+                <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xl font-bold">Create User</h3>
+                    <button className="text-gray-500 hover:text-gray-800" onClick={() => setShowCreateUserModal(false)}>×</button>
+                  </div>
+                  <form onSubmit={handleCreateUser} className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Username</label>
+                        <input required value={newUser.username} onChange={(e) => setNewUser(prev => ({ ...prev, username: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Email</label>
+                        <input required type="email" value={newUser.email} onChange={(e) => setNewUser(prev => ({ ...prev, email: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">First name</label>
+                        <input value={newUser.first_name} onChange={(e) => setNewUser(prev => ({ ...prev, first_name: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Last name</label>
+                        <input value={newUser.last_name} onChange={(e) => setNewUser(prev => ({ ...prev, last_name: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Password</label>
+                        <input required type="password" value={newUser.password} onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Role</label>
+                        <select value={newUser.role} onChange={(e) => setNewUser(prev => ({ ...prev, role: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2">
+                          <option value="client">Client</option>
+                          <option value="employee">Employee</option>
+                          <option value="admin">Admin</option>
+                          <option value="super admin">Super Admin</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button type="button" onClick={() => setShowCreateUserModal(false)} className="px-4 py-2 border rounded">Cancel</button>
+                      <button type="submit" className="px-5 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Create</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      case 'dashboard':
+      default: {
+        const totalSales = adminReports?.monthly_sales?.[0]?.total_sales || 0;
+        const deadstockCount = adminReports?.deadstock?.length || 0;
+        const topSeller = adminReports?.top_selling_products?.[0]?.name || 'N/A';
+        const deadstockTotalValue = adminReports?.deadstock_total_value ?? 0;
+        return (
+          <div className="p-6 space-y-6">
+            <div>
+              <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Super Admin Dashboard</h2>
+              <p className="text-gray-600">Overview of key metrics and recent activity.</p>
+            </div>
+
+            {/* Stats Cards (consistent with Employee) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-2xl shadow-lg border">
+                <div className="flex items-center">
+                  <div className="p-3 bg-green-100 rounded-lg flex items-center justify-center">
+                    <span className="text-2xl font-extrabold text-green-600">₱</span>
+                  </div>
+                  <div className="ml-4">
+                    <p className="text-sm font-medium text-gray-600">Sales This Month</p>
+                    <p className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(totalSales)}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-2xl shadow-lg border">
+                <div className="flex items-center">
+                  <div className="p-3 bg-yellow-100 rounded-lg">
+                    <Package className="h-6 w-6 text-yellow-600" />
+                  </div>
+                  <div className="ml-4">
+                    <p className="text-sm font-medium text-gray-600">Deadstock Items</p>
+                    <div>
+                      <p className="text-2xl font-bold text-gray-900">{deadstockCount}</p>
+                      <p className="text-sm text-gray-600">
+                        Total: {formatCurrencyPHP(deadstockTotalValue)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-2xl shadow-lg border">
+                <div className="flex items-center">
+                  <div className="p-3 bg-blue-100 rounded-lg">
+                    <TrendingUp className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <div className="ml-4">
+                    <p className="text-sm font-medium text-gray-600">Top Seller</p>
+                    <p className="text-base font-bold text-gray-900 truncate max-w-xs" title={topSeller}>{topSeller}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Recent orders */}
+            <div className="card p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Orders</h3>
+              <div className="overflow-x-auto">
+                <table className="table-ui">
+                  <thead>
+                    <tr>
+                      <th>Order ID</th>
+                      <th>Customer</th>
+                      <th>Total</th>
+                      <th>Status</th>
+                      <th>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(orders && orders.length > 0) ? orders.slice(0, 5).map((order) => (
+                      <tr key={order.id}>
+                        <td className="whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
+                        <td className="whitespace-nowrap text-sm text-gray-900">{order.user_id}</td>
+                        <td className="whitespace-nowrap text-sm text-gray-900">₱{order.total_price}</td>
+                        <td className="whitespace-nowrap text-sm text-gray-900">{order.status}</td>
+                        <td className="whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan="5" className="text-center py-4">No recent orders.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      }
+    }
+  };
+
   return (
-    <div className="p-6">
-      <h2 className="text-2xl font-bold text-gray-900">Super Admin Dashboard</h2>
-      <p className="text-gray-600">Temporary fallback view.</p>
+    <div className="min-h-[70vh]">
+      {renderContent()}
     </div>
   );
 };

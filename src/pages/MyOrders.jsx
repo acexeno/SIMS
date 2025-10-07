@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShoppingCart, Clock, CheckCircle, XCircle, Eye, Download, Calendar, DollarSign, Truck, AlertCircle, X, Plus } from 'lucide-react';
+import { formatCurrencyPHP } from '../utils/currency';
+import { Package, ShoppingCart, Clock, CheckCircle, XCircle, Eye, Download, Calendar, Truck, AlertCircle, X, Plus } from 'lucide-react';
+import { API_BASE } from '../utils/apiBase';
 
 const MyOrders = ({ setCurrentPage }) => {
   const [orders, setOrders] = useState([]);
@@ -7,14 +9,72 @@ const MyOrders = ({ setCurrentPage }) => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderDetails, setShowOrderDetails] = useState(false);
 
-  // Simulate loading orders from backend
+  // Robust base64url JWT expiry check
+  const isTokenExpired = (token) => {
+    try {
+      const part = token.split('.')[1];
+      if (!part) return true;
+      let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const payload = JSON.parse(atob(b64));
+      if (!payload.exp) return false;
+      return Date.now() >= payload.exp * 1000;
+    } catch {
+      return true;
+    }
+  };
+
+  // Load orders from backend for the current user
   useEffect(() => {
-    // Simulate API call delay
-    setTimeout(() => {
-      // For demo purposes, we'll start with no orders
-      setOrders([]);
-      setLoading(false);
-    }, 1000);
+    const fetchOrders = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token || isTokenExpired(token)) {
+          setOrders([]);
+          setLoading(false);
+          return;
+        }
+        const res = await fetch(`${API_BASE}/index.php?endpoint=orders`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+          setOrders([]);
+          setLoading(false);
+          return;
+        }
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.data)) {
+          const mapped = data.data.map(o => ({
+            id: o.id,
+            orderNumber: o.id,
+            description: o.notes || '',
+            status: (o.status || 'pending').toString().toLowerCase(),
+            orderDate: o.order_date,
+            totalAmount: Number(o.total ?? o.total_price ?? 0),
+            itemCount: o.item_count || 0,
+            items: [],
+            progress: (() => {
+              const s = (o.status || '').toString().toLowerCase();
+              if (s === 'pending') return 0.25;
+              if (s === 'processing') return 0.5;
+              if (s === 'shipped') return 0.75;
+              if (s === 'delivered') return 1;
+              return 0;
+            })()
+          }));
+          setOrders(mapped);
+        } else {
+          setOrders([]);
+        }
+      } catch (e) {
+        console.error('Error loading orders:', e);
+        setOrders([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchOrders();
   }, []);
 
   const getStatusColor = (status) => {
@@ -59,6 +119,60 @@ const MyOrders = ({ setCurrentPage }) => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Fetch full order with items and open modal
+  const loadOrderDetails = async (orderId) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token || isTokenExpired(token)) {
+        return;
+      }
+      const res = await fetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.status === 401) {
+        return;
+      }
+      const data = await res.json();
+      if (data && data.success && data.data) {
+        const o = data.data;
+        const items = Array.isArray(o.items) ? o.items.map(it => ({
+          name: it.component_name || `Component #${it.component_id}`,
+          category: it.category || 'Component',
+          price: Number(it.price || 0),
+          quantity: Number(it.quantity || 1)
+        })) : [];
+        const itemCount = items.reduce((sum, it) => sum + (it.quantity || 0), 0);
+        const order = {
+          id: o.id,
+          orderNumber: o.id,
+          description: o.notes || '',
+          status: (o.status || 'pending').toString().toLowerCase(),
+          orderDate: o.order_date,
+          totalAmount: Number(o.total ?? o.total_price ?? 0),
+          itemCount,
+          items,
+          // Provide sane defaults for the summary section
+          subtotal: items.reduce((s, it) => s + (it.price * it.quantity), 0),
+          shipping: 0,
+          tax: 0,
+          progress: (() => {
+            const s = (o.status || '').toString().toLowerCase();
+            if (s === 'pending') return 0.25;
+            if (s === 'processing') return 0.5;
+            if (s === 'shipped') return 0.75;
+            if (s === 'delivered') return 1;
+            return 0;
+          })()
+        };
+        setSelectedOrder(order);
+        setShowOrderDetails(true);
+      }
+    } catch (e) {
+      console.error('Error loading order details:', e);
+    }
   };
 
   const EmptyState = () => (
@@ -134,8 +248,7 @@ const MyOrders = ({ setCurrentPage }) => {
                   {formatDate(order.orderDate)}
                 </div>
                 <div className="flex items-center gap-1">
-                  <DollarSign className="w-4 h-4" />
-                  ₱{order.totalAmount.toLocaleString()}
+                  {formatCurrencyPHP(order.totalAmount)}
                 </div>
                 <div className="flex items-center gap-1">
                   <Package className="w-4 h-4" />
@@ -146,10 +259,7 @@ const MyOrders = ({ setCurrentPage }) => {
             
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => {
-                  setSelectedOrder(order);
-                  setShowOrderDetails(true);
-                }}
+                onClick={() => loadOrderDetails(order.id)}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
                 title="View order details"
               >
@@ -181,7 +291,7 @@ const MyOrders = ({ setCurrentPage }) => {
               <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">
                 <div className="text-xs font-medium text-gray-600 mb-1">{item.category}</div>
                 <div className="text-sm font-semibold text-gray-900 truncate">{item.name}</div>
-                <div className="text-xs text-gray-500">₱{item.price.toLocaleString()}</div>
+                <div className="text-xs text-gray-500">{formatCurrencyPHP(item.price)}</div>
               </div>
             ))}
             {order.items.length > 3 && (
@@ -193,10 +303,7 @@ const MyOrders = ({ setCurrentPage }) => {
           
           <div className="flex gap-3">
             <button 
-              onClick={() => {
-                setSelectedOrder(order);
-                setShowOrderDetails(true);
-              }}
+              onClick={() => loadOrderDetails(order.id)}
               className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
             >
               <Eye className="w-4 h-4" />
@@ -269,7 +376,7 @@ const MyOrders = ({ setCurrentPage }) => {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-medium text-gray-900">₱{item.price.toLocaleString()}</p>
+                      <p className="font-medium text-gray-900">{formatCurrencyPHP(item.price)}</p>
                       <p className="text-sm text-gray-600">Qty: {item.quantity}</p>
                     </div>
                   </div>
@@ -283,19 +390,19 @@ const MyOrders = ({ setCurrentPage }) => {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Subtotal:</span>
-                  <span className="font-medium">₱{order.subtotal.toLocaleString()}</span>
+                  <span className="font-medium">{formatCurrencyPHP(order.subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Shipping:</span>
-                  <span className="font-medium text-green-600">₱{order.shipping.toLocaleString()}</span>
+                  <span className="font-medium text-green-600">{formatCurrencyPHP(order.shipping)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Tax:</span>
-                  <span className="font-medium">₱{order.tax.toLocaleString()}</span>
+                  <span className="font-medium">{formatCurrencyPHP(order.tax)}</span>
                 </div>
                 <div className="flex justify-between text-lg font-semibold border-t pt-2">
                   <span className="text-gray-900">Total:</span>
-                  <span className="text-green-600">₱{order.totalAmount.toLocaleString()}</span>
+                  <span className="text-green-600">{formatCurrencyPHP(order.totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -331,7 +438,7 @@ const MyOrders = ({ setCurrentPage }) => {
           <div className="flex items-center gap-4 text-sm text-gray-600">
             <span>Total orders: {orders.length}</span>
             <span>•</span>
-            <span>Total spent: ₱{orders.reduce((sum, order) => sum + order.totalAmount, 0).toLocaleString()}</span>
+            <span>Total spent: {formatCurrencyPHP(orders.reduce((sum, order) => sum + order.totalAmount, 0))}</span>
           </div>
         )}
       </div>

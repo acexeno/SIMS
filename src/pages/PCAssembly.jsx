@@ -40,6 +40,7 @@ import CompatibilityComparisonModal from '../components/CompatibilityComparisonM
 import { getCompatibilityScore, filterCompatibleComponents } from '../utils/compatibilityService'
 import axios from 'axios'
 import { API_BASE } from '../utils/apiBase'
+import { formatCurrencyPHP } from '../utils/currency'
 
 const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, setSelectedComponents: setSelectedComponentsProp, onLoaded, user, onShowAuth, setUser }) => {
   // State management
@@ -71,6 +72,10 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Force remount for child components after a full clear
   const [resetNonce, setResetNonce] = useState(0);
   
+  // Order State
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [orderConfirmation, setOrderConfirmation] = useState(null); // { order_id, total }
+  
   // Build State
   const [buildName, setBuildName] = useState('');
   const [buildDescription, setBuildDescription] = useState('');
@@ -94,6 +99,9 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Recommendations State
   const [recommendations, setRecommendations] = useState({});
   const [loadingRecommendations, setLoadingRecommendations] = useState({});
+
+  // Branch filter for assembly: null = All (global), or 'BULACAN' / 'MARIKINA'
+  const [branch, setBranch] = useState(null);
 
   // Ref to track previous components for localStorage
   const prevComponentsRef = useRef(null);
@@ -146,7 +154,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         if (!currentCategory || !currentCategory.key) return;
         
         const dbCategory = getApiCategoryName(currentCategory.key);
-        const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}`;
+        const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
         
         const response = await fetch(url);
         const data = await response.json();
@@ -160,7 +168,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     };
 
     fetchAllComponents();
-  }, [getCurrentCategory, getApiCategoryName]);
+  }, [getCurrentCategory, getApiCategoryName, branch]);
 
 
 
@@ -175,7 +183,33 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       case: null,
       cooler: null
     };
-    return { ...defaultKeys, ...components };
+
+    // Canonicalize incoming keys to prevent alias drift (e.g., 'cooling' -> 'cooler')
+    const KEY_MAP = {
+      cpu: ['cpu', 'processor', 'procie', 'procie only', 'processor only'],
+      motherboard: ['motherboard', 'mobo'],
+      gpu: ['gpu', 'graphics', 'graphics card', 'video', 'video card', 'vga'],
+      ram: ['ram', 'memory', 'ddr', 'ddr4', 'ddr5', 'ram 3200mhz'],
+      storage: ['storage', 'ssd', 'nvme', 'ssd nvme', 'hdd', 'hard drive', 'drive'],
+      psu: ['psu', 'power supply', 'psu - tr', 'tr psu'],
+      case: ['case', 'chassis', 'case gaming'],
+      cooler: ['cooler', 'coolers', 'cooling', 'aio', 'cpu cooler', 'liquid cooler', 'water cooling', 'fan', 'heatsink']
+    };
+
+    const input = components || {};
+    const lower = {};
+    Object.keys(input).forEach(k => { lower[k.toLowerCase()] = input[k]; });
+
+    const canon = {};
+    Object.entries(KEY_MAP).forEach(([canonKey, aliases]) => {
+      for (const a of aliases) {
+        if (lower[a]) { canon[canonKey] = lower[a]; break; }
+      }
+    });
+    // Retain any already canonical keys
+    Object.keys(lower).forEach(k => { if (KEY_MAP[k]) canon[k] = lower[k]; });
+
+    return { ...defaultKeys, ...canon };
   }, []);
 
   const getComponentSpec = useCallback((component, specName) => {
@@ -743,7 +777,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Save build function
   const isTokenExpired = (token) => {
     try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
+      const part = token.split('.')[1];
+      if (!part) return true;
+      // Convert base64url -> base64 and pad
+      let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const payload = JSON.parse(atob(b64));
       if (!payload.exp) return false;
       return Date.now() >= payload.exp * 1000;
     } catch {
@@ -752,6 +791,71 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   };
 
   const [userLoading, setUserLoading] = useState(false);
+
+  // Create sales order from selected components
+  const handleCompleteBuild = useCallback(async () => {
+    try {
+      // Require all required components
+      if (getSelectedRequiredComponentsCount() < getRequiredComponentsCount()) {
+        alert('Please complete selecting all required components before proceeding.');
+        return;
+      }
+      if (hasCriticalCompatibilityIssues) {
+        alert('Please resolve critical compatibility issues before proceeding.');
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      if (!token || isTokenExpired(token) || !user) {
+        setShowAuthPrompt(true);
+        return;
+      }
+
+      // Build order items (default quantity 1 per component)
+      const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
+      const optionalCategories = ['cooler'];
+      const items = [];
+      const pushItem = (comp) => {
+        if (comp && typeof comp.id === 'number') {
+          const price = typeof comp.price === 'string' ? parseFloat(comp.price) : (comp.price || 0);
+          items.push({ component_id: comp.id, quantity: 1, unit_price: price });
+        }
+      };
+      requiredCategories.forEach(cat => pushItem(selectedComponents[cat]));
+      optionalCategories.forEach(cat => pushItem(selectedComponents[cat]));
+
+      if (items.length === 0) {
+        alert('No valid components found to place an order.');
+        return;
+      }
+
+      setPlacingOrder(true);
+      const response = await fetch(`${API_BASE}/index.php?endpoint=orders${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: user?.id,
+          status: 'Completed',
+          items
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to place order');
+      }
+
+      setOrderConfirmation({ order_id: result.order_id, total: result.total });
+    } catch (e) {
+      console.error('Order creation failed:', e);
+      alert(`Failed to place order: ${e.message}`);
+    } finally {
+      setPlacingOrder(false);
+    }
+  }, [selectedComponents, user, hasCriticalCompatibilityIssues, getRequiredComponentsCount, getSelectedRequiredComponentsCount, API_BASE, branch]);
 
   const handleSaveBuild = useCallback(async () => {
     if (!buildName.trim()) return;
@@ -784,25 +888,24 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         name: buildName,
         description: buildDescription,
         components: filteredComponents,
-        compatibility: getCompatibilityScore(),
+        // Use the precomputed compatibilityScore state, which is updated by the
+        // compatibilityService as components change. The local getCompatibilityScore()
+        // can be 0 if checks haven't run yet when saving.
+        compatibility: compatibilityScore,
         totalPrice: getTotalPrice(),
         is_public: isPublic
       };
       
-      const method = isEditing ? 'PUT' : 'POST';
-      let url = isEditing 
-        ? `${API_BASE}/index.php?endpoint=builds&id=${editingBuildId}`
+      // Only treat as update if we have a valid numeric build ID
+      const buildIdNum = typeof editingBuildId === 'string' ? parseInt(editingBuildId, 10) : editingBuildId;
+      const isUpdate = isEditing && Number.isFinite(buildIdNum) && buildIdNum > 0;
+
+      const method = isUpdate ? 'PUT' : 'POST';
+      let url = isUpdate 
+        ? `${API_BASE}/index.php?endpoint=builds&id=${buildIdNum}`
         : `${API_BASE}/index.php?endpoint=builds`;
       
-      // Debug: Check token and user
-      console.log('=== DEBUG AUTHENTICATION ===');
-      console.log('User object:', user);
-      console.log('Token exists:', !!token);
-      console.log('Token length:', token ? token.length : 0);
-      console.log('Token preview:', token ? token.substring(0, 20) + '...' : 'No token');
-      console.log('Request URL:', url);
-      console.log('Request method:', method);
-      console.log('Request data:', buildData);
+      // Authentication check
       
       const headers = {
         'Content-Type': 'application/json',
@@ -817,13 +920,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         body: JSON.stringify(buildData)
       });
       
-      console.log('=== RESPONSE DEBUG ===');
-      console.log('Response status:', response.status);
-      console.log('Response status text:', response.statusText);
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-      
       const result = await response.json();
-      console.log('Response body:', result);
       
       if (result.success) {
         const savedBuildId = result.data?.id || result.build_id;
@@ -890,7 +987,8 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
           build_name: buildName,
           build_description: buildDescription,
           total_price: getTotalPrice(),
-          compatibility: getCompatibilityScore()
+          // Use the same compatibilityScore we save to the build
+          compatibility: compatibilityScore
         })
       });
 
@@ -959,8 +1057,16 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         if (editingBuildData) {
           try {
             const editingBuild = JSON.parse(editingBuildData);
-            setIsEditing(true);
-            setEditingBuildId(editingBuild.id);
+            const candidateId = typeof editingBuild.id === 'string' ? parseInt(editingBuild.id, 10) : editingBuild.id;
+            if (Number.isFinite(candidateId) && candidateId > 0) {
+              setIsEditing(true);
+              setEditingBuildId(candidateId);
+            } else {
+              // Coming from a prebuilt (name/description only) – not an edit
+              setIsEditing(false);
+              setEditingBuildId(null);
+            }
+            // Use provided name/description to prefill the form even if not editing
             setBuildName(editingBuild.name || '');
             setBuildDescription(editingBuild.description || '');
           } catch (error) {
@@ -1365,18 +1471,25 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Restore user state if token exists but user is null
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (token && !user && typeof setUser === 'function') {
+    if (!user && typeof setUser === 'function' && token && !isTokenExpired(token)) {
       setUserLoading(true);
       fetch(`${API_BASE}/index.php?endpoint=profile`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${token}` }
       })
-        .then(res => res.json())
+        .then(res => {
+          if (res.status === 401) {
+            // Unauthorized: do not clear global token here
+            return null;
+          }
+          return res.json();
+        })
         .then(data => {
-          if (data.success && data.user) {
+          if (data && data.success && data.user) {
             setUser(data.user);
           }
         })
+        .catch(() => { /* ignore */ })
         .finally(() => setUserLoading(false));
     }
   }, [user, setUser]);
@@ -1602,6 +1715,33 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                       <span>Compatibility Score: {compatibilityScore}%</span>
                     </div>
                   </div>
+                  {/* Branch selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Branch:</span>
+                    <div className="inline-flex rounded-lg border overflow-hidden">
+                      <button
+                        className={`px-3 py-1 text-sm ${branch === null ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                        onClick={() => setBranch(null)}
+                        type="button"
+                      >
+                        All
+                      </button>
+                      <button
+                        className={`px-3 py-1 text-sm border-l ${branch === 'BULACAN' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                        onClick={() => setBranch('BULACAN')}
+                        type="button"
+                      >
+                        Bulacan
+                      </button>
+                      <button
+                        className={`px-3 py-1 text-sm border-l ${branch === 'MARIKINA' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                        onClick={() => setBranch('MARIKINA')}
+                        type="button"
+                      >
+                        Marikina
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 
                 <EnhancedComponentSelector 
@@ -1614,6 +1754,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                   recommendations={recommendations[getCurrentCategory().key] || []}
                   loadingRecommendations={loadingRecommendations[getCurrentCategory().key] || false}
                   compatibilityIssues={getCompatibilitySuggestions(getCurrentCategory().key) || []}
+                  branch={branch}
                 />
               </div>
             </div>
@@ -1752,7 +1893,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-gray-900 text-sm truncate">{component.name}</p>
                           <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className="font-semibold text-green-600">₱{component.price.toLocaleString()}</span>
+                            <span className="font-semibold text-green-600">{formatCurrencyPHP(component.price)}</span>
                             <span>•</span>
                             <span className="truncate">
                               {component.socket && `Socket: ${component.socket}`}
@@ -1792,12 +1933,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center justify-between">
                     <span className="text-gray-600">Subtotal:</span>
-                    <span className="font-medium">₱{getTotalPrice().toLocaleString()}</span>
+                    <span className="font-medium">{formatCurrencyPHP(getTotalPrice())}</span>
                   </div>
                   <div className="flex items-center justify-between text-lg font-semibold border-t pt-3">
                     <span className="text-gray-900">Total:</span>
                     <span className="text-2xl font-bold text-green-600">
-                      ₱{getTotalPrice().toLocaleString()}
+                      {formatCurrencyPHP(getTotalPrice())}
                     </span>
                   </div>
                 </div>
@@ -1819,10 +1960,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                     {!user && <span className="text-xs ml-2">(Login Required)</span>}
                   </button>
                   <button
-                    onClick={() => {
-                      // Add logic for completing the build / proceeding to order
-                      alert('Proceeding to order confirmation (feature coming soon!).');
-                    }}
+                    onClick={handleCompleteBuild}
                     className={`inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-lg transition-all duration-200 ${
                       getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
                         ? getCompatibilityScore() === 100
@@ -1832,22 +1970,28 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                     }`}
                     disabled={getSelectedRequiredComponentsCount() < getRequiredComponentsCount()}
                   >
-                    {getSelectedRequiredComponentsCount() === getRequiredComponentsCount() 
-                      ? getCompatibilityScore() === 100
-                        ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <ShoppingCart className="w-5 h-5" />
-                            <span>Complete Build!</span>
-                          </div>
-                        )
-                        : (
-                          <div className="flex items-center justify-center gap-2">
-                            <AlertTriangle className="w-5 h-5" />
-                            <span>Complete Build (with warnings)</span>
-                          </div>
-                        )
-                      : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
-                    }
+                    {placingOrder ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        <span>Placing order...</span>
+                      </div>
+                    ) : (
+                      getSelectedRequiredComponentsCount() === getRequiredComponentsCount() 
+                        ? getCompatibilityScore() === 100
+                          ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <ShoppingCart className="w-5 h-5" />
+                              <span>Complete Build!</span>
+                            </div>
+                          )
+                          : (
+                            <div className="flex items-center justify-center gap-2">
+                              <AlertTriangle className="w-5 h-5" />
+                              <span>Complete Build (with warnings)</span>
+                            </div>
+                          )
+                        : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
+                    )}
                   </button>
                   <button
                     onClick={handleClearAllComponents}
@@ -2114,6 +2258,40 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Confirmation Modal */}
+      {orderConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Order Placed Successfully</h2>
+            </div>
+            <div className="p-6 space-y-3">
+              <p className="text-sm text-gray-700">Your PC build has been recorded as a sales order.</p>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">Order ID:</span>
+                <span className="font-semibold text-gray-900">#{orderConfirmation.order_id}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">Order Total:</span>
+                <span className="font-semibold text-green-700">₱{Number(orderConfirmation.total || 0).toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setOrderConfirmation(null);
+                  // Optional: clear the current selection after successful order
+                  try { handleClearAllComponents(); } catch {}
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

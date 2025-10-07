@@ -2,10 +2,16 @@
 // JWT Helper for SIMS Authentication
 // Note: In production, use a proper JWT library like firebase/php-jwt
 
-// JWT Secret Key (in production, use a strong, unique secret)
-define('JWT_SECRET', 'builditpc_secret_key_2024_change_in_production');
+// Load environment helper (safe if included multiple times)
+require_once __DIR__ . '/../config/env.php';
+
+// JWT configuration with environment overrides
+define('JWT_SECRET', env('JWT_SECRET', 'builditpc_secret_key_2024_change_in_production'));
 define('JWT_ALGORITHM', 'HS256');
-define('JWT_EXPIRY', 3600); // 1 hour
+define('JWT_EXPIRY', (int) env('JWT_EXPIRY', '3600')); // default 1 hour
+// Refresh token configuration
+define('REFRESH_JWT_SECRET', env('REFRESH_JWT_SECRET', JWT_SECRET));
+define('REFRESH_JWT_EXPIRY', (int) env('REFRESH_JWT_EXPIRY', '1209600')); // default 14 days
 
 // Generate JWT Token
 function generateJWT($userId, $username, $roles) {
@@ -18,6 +24,7 @@ function generateJWT($userId, $username, $roles) {
         'user_id' => $userId,
         'username' => $username,
         'roles' => $roles,
+        'type' => 'access',
         'iat' => time(),
         'exp' => time() + JWT_EXPIRY
     ]);
@@ -62,6 +69,65 @@ function verifyJWT($token) {
     return $payloadData;
 }
 
+// Generate Refresh JWT Token
+function generateRefreshJWT($userId, $username, $roles) {
+    $header = json_encode([
+        'typ' => 'JWT',
+        'alg' => JWT_ALGORITHM
+    ]);
+
+    $payload = json_encode([
+        'user_id' => $userId,
+        'username' => $username,
+        'roles' => $roles,
+        'type' => 'refresh',
+        'iat' => time(),
+        'exp' => time() + REFRESH_JWT_EXPIRY
+    ]);
+
+    $base64Header = base64url_encode($header);
+    $base64Payload = base64url_encode($payload);
+
+    $signature = hash_hmac('sha256', $base64Header . "." . $base64Payload, REFRESH_JWT_SECRET, true);
+    $base64Signature = base64url_encode($signature);
+
+    return $base64Header . "." . $base64Payload . "." . $base64Signature;
+}
+
+// Verify Refresh JWT Token
+function verifyRefreshJWT($token) {
+    $parts = explode('.', $token);
+    if (count($parts) !== 3) {
+        return false;
+    }
+
+    list($header, $payload, $signature) = $parts;
+
+    $validSignature = base64url_encode(
+        hash_hmac('sha256', $header . "." . $payload, REFRESH_JWT_SECRET, true)
+    );
+
+    if ($signature !== $validSignature) {
+        return false;
+    }
+
+    $payloadData = json_decode(base64url_decode($payload), true);
+
+    if (!$payloadData) {
+        return false;
+    }
+
+    // Ensure it's a refresh token and not expired
+    if (!isset($payloadData['type']) || $payloadData['type'] !== 'refresh') {
+        return false;
+    }
+    if (isset($payloadData['exp']) && $payloadData['exp'] < time()) {
+        return false;
+    }
+
+    return $payloadData;
+}
+
 // Base64URL encoding
 function base64url_encode($data) {
     return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
@@ -69,7 +135,14 @@ function base64url_encode($data) {
 
 // Base64URL decoding
 function base64url_decode($data) {
-    return base64_decode(str_pad(strtr($data, '-_', '+/'), strlen($data) % 4, '=', STR_PAD_RIGHT));
+    // Convert URL-safe alphabet back to standard Base64
+    $b64 = strtr($data, '-_', '+/');
+    // Properly pad the string length to a multiple of 4
+    $remainder = strlen($b64) % 4;
+    if ($remainder) {
+        $b64 .= str_repeat('=', 4 - $remainder);
+    }
+    return base64_decode($b64);
 }
 
 // Check if user has specific role
@@ -179,5 +252,4 @@ function hasPermission($userRoles, $permission, $action = null) {
     }
     
     return $permissions[$permission] === $action;
-}
-?> 
+} 

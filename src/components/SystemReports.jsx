@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatCurrencyPHP } from '../utils/currency';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, PieChart as PieIcon, Package, Award, Layers, AlertTriangle, BarChart3, Eye, EyeOff } from 'lucide-react';
 
@@ -145,12 +146,27 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
   }
 
   return (
-    <div className="space-y-8 p-6">
-      <h2 className="text-2xl font-bold text-gray-900">Sales Reports & Analytics</h2>
+    <div className="page-container space-y-8">
+      <h2 className="page-title">Sales Reports & Analytics</h2>
+      {/* Friendly KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="card">
+          <div className="text-sm text-gray-500">Average Order Value</div>
+          <div className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(average_order_value?.value || 0)}</div>
+        </div>
+        <div className="card">
+          <div className="text-sm text-gray-500">Top Category</div>
+          <div className="text-2xl font-bold text-gray-900">{(revenue_per_category?.[0]?.category) || '—'}</div>
+        </div>
+        <div className="card">
+          <div className="text-sm text-gray-500">Top Product</div>
+          <div className="text-2xl font-bold text-gray-900">{(top_selling_products?.[0]?.product_name) || '—'}</div>
+        </div>
+      </div>
       <div className="space-y-6">
 
         {/* Sales Chart Card */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
+        <div className="card chart-card">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Sales Overview</h3>
             <div className="flex items-center gap-2">
@@ -167,13 +183,15 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
               </select>
             </div>
           </div>
-          {salesChartComponent}
+          <div className="h-[320px]">
+            {salesChartComponent}
+          </div>
         </div>
 
         {/* Deadstock Toggle Button */}
         <div className="flex justify-end">
           <button
-            className={`flex items-center gap-2 px-4 py-2 text-sm rounded-md transition ${showDeadstock ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+            className={`btn ${showDeadstock ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setShowDeadstock(v => !v)}
           >
             {showDeadstock ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -183,7 +201,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
 
         {/* Deadstock (conditionally rendered) */}
         {showDeadstock && (
-          <div className="bg-white rounded-lg shadow-sm border">
+          <div className="card">
             <div className="p-6 border-b border-gray-200">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <h3 className="text-lg font-semibold text-gray-900">Deadstock (No Sales in {deadstockPeriod} Days)</h3>
@@ -249,10 +267,10 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
                                 {item.stock_quantity}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                ₱{Number(item.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                {formatCurrencyPHP(item.price)}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                ₱{Number(item.price * item.stock_quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                {formatCurrencyPHP(Number(item.price) * Number(item.stock_quantity))}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                 {item.last_sold_date ? new Date(item.last_sold_date).toLocaleDateString() : 'Never'}
@@ -347,18 +365,21 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
         )}
 
         {/* Analytics Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Top-Selling Products */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Top-Selling Products</h3>
-            <div className="h-[300px]">
+          <div className="card chart-card">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-gray-900">Top-Selling Products</h3>
+            <span className="text-xs text-gray-500">Qty vs Revenue</span>
+          </div>
+          <div className="h-[320px]">
               {top_selling_products && top_selling_products.length > 0 ? (
                 <BarChart data={top_selling_products} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
                   <YAxis dataKey="name" type="category" width={120} />
                   <Tooltip />
-                  <Legend />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="total_quantity" fill="#6366F1" name="Quantity Sold" />
                   <Bar dataKey="total_revenue" fill="#F59E42" name="Revenue" />
                 </BarChart>
@@ -369,7 +390,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
           </div>
           
           {/* Revenue by Category */}
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="card chart-card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Revenue by Category</h3>
             <div className="h-[300px] flex items-center justify-center">
               {revenue_per_category && revenue_per_category.length > 0 ? (
@@ -387,7 +408,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
                       <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => [`₱${value.toLocaleString()}`, 'Revenue']} />
+                  <Tooltip formatter={(value) => [formatCurrencyPHP(value), 'Revenue']} />
                   <Legend />
                 </PieChart>
               ) : (
@@ -396,7 +417,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
             </div>
           </div>
           {/* Revenue by Brand */}
-          <div className="bg-white rounded-2xl shadow-lg border p-6 transition hover:shadow-2xl">
+          <div className="card chart-card">
             <div className="flex items-center gap-2 mb-4"><Package className="h-5 w-5 text-blue-500" /><h3 className="text-lg font-bold text-gray-900">Revenue by Brand</h3></div>
             <ResponsiveContainer width="100%" height={250}>
               {revenue_per_brand && revenue_per_brand.length > 0 ? (
@@ -421,7 +442,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
             </ResponsiveContainer>
           </div>
           {/* Order Status Breakdown */}
-          <div className="bg-white rounded-2xl shadow-lg border p-6 transition hover:shadow-2xl">
+          <div className="card chart-card">
             <div className="flex items-center gap-2 mb-4"><PieIcon className="h-5 w-5 text-green-500" /><h3 className="text-lg font-bold text-gray-900">Order Status Breakdown</h3></div>
             <ResponsiveContainer width="100%" height={250}>
               {order_status_breakdown && order_status_breakdown.length > 0 ? (
@@ -450,7 +471,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
         {/* Stock Movement & Deadstock */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
           {/* Stock Movement */}
-          <div className="bg-white rounded-2xl shadow-lg border p-6 transition hover:shadow-2xl">
+          <div className="card chart-card">
             <div className="flex items-center gap-2 mb-4"><TrendingUp className="h-5 w-5 text-teal-500" /><h3 className="text-lg font-bold text-gray-900">Stock Movement (Last 30 Days)</h3></div>
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={stock_movement} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
@@ -468,9 +489,9 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
         </div>
 
         {/* Average Order Value */}
-        <div className="bg-white rounded-2xl shadow-lg border p-8 max-w-md mx-auto mt-10 flex flex-col items-center transition hover:shadow-2xl">
+        <div className="card p-8 max-w-md mx-auto mt-10 flex flex-col items-center">
           <div className="flex items-center gap-2 mb-2"><PieIcon className="h-7 w-7 text-indigo-500" /><h3 className="text-lg font-bold text-gray-900">Average Order Value</h3></div>
-          <div className="text-4xl font-extrabold text-green-700">₱{average_order_value?.avg_order_value ? Number(average_order_value.avg_order_value).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) : '0.00'}</div>
+          <div className="text-4xl font-extrabold text-green-700">{formatCurrencyPHP(average_order_value?.avg_order_value || 0)}</div>
         </div>
       </div>
     </div>

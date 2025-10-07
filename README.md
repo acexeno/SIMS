@@ -297,6 +297,19 @@ The system performs comprehensive compatibility checks:
 - `PUT /backend/api/index.php?endpoint=profile` - Update user profile
 - `POST /backend/api/index.php?endpoint=logout` - User logout
 
+### OTP Email Verification
+- `POST /backend/api/index.php?endpoint=otp_request` - Request an OTP to be emailed
+  - JSON body: `{ "email": "user@example.com", "purpose": "login" }`
+  - Response: `{ success: true, message: "OTP sent successfully" }`
+- `POST /backend/api/index.php?endpoint=otp_verify` - Verify an OTP code
+  - JSON body: `{ "email": "user@example.com", "purpose": "login", "code": "123456" }`
+  - Response: `{ success: true, message: "OTP verified", user?: { id, username, email } }`
+
+Notes:
+- The `purpose` field can be `login`, `register`, `reset_password`, etc. Default is `login`.
+- Rate limits: by default, at most 1 request per 60 seconds and up to 5 requests per hour per email/purpose.
+- OTP expiry: default 5 minutes.
+
 ### Components
 - `GET /backend/api/index.php?endpoint=components&category={category}` - Get components by category
 - `GET /backend/api/get_all_components.php` - Get all components

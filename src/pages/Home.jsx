@@ -34,10 +34,25 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     fetchPrebuilts()
   }, [])
 
+  // Canonical key mapping for component categories
+  const KEY_MAP = {
+    cpu: ['cpu', 'processor', 'procie', 'procie only', 'processor only'],
+    motherboard: ['motherboard', 'mobo'],
+    gpu: ['gpu', 'graphics', 'graphics card', 'video', 'video card', 'vga'],
+    ram: ['ram', 'memory', 'ddr', 'ddr4', 'ddr5'],
+    storage: ['storage', 'ssd', 'nvme', 'hdd', 'hard drive', 'drive'],
+    psu: ['psu', 'power supply', 'psu - tr', 'tr psu'],
+    case: ['case', 'chassis', 'case gaming'],
+    cooler: ['cooler', 'coolers', 'aio', 'cooling', 'cpu cooler', 'water cooling', 'liquid cooler', 'fan', 'heatsink']
+  };
+
   // Helper to fetch full component objects by IDs
   async function fetchComponentsByIds(componentIds) {
     if (!componentIds || typeof componentIds !== 'object') return {};
-    const ids = Object.values(componentIds).filter(id => id && typeof id === 'number');
+    // Accept numeric strings and numbers
+    const ids = Object.values(componentIds)
+      .map(v => typeof v === 'string' ? parseInt(v, 10) : v)
+      .filter(v => Number.isFinite(v) && v > 0);
     if (ids.length === 0) return {};
     const url = `${API_BASE}/get_components_by_ids.php?ids=${ids.join(',')}`;
     const response = await fetch(url);
@@ -55,6 +70,33 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     return {};
   }
 
+  // Fetch cheapest component for a given canonical category key (for fallbacks)
+  async function fetchCheapestForCategory(canonKey) {
+    const map = {
+      cpu: 'CPU',
+      motherboard: 'Motherboard',
+      gpu: 'GPU',
+      ram: 'RAM',
+      storage: 'Storage',
+      psu: 'PSU',
+      case: 'Case',
+      cooler: 'Cooler'
+    };
+    const category = map[canonKey];
+    if (!category) return null;
+    try {
+      const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(category)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.data) || data.data.length === 0) return null;
+      const items = data.data.slice();
+      items.sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0));
+      return items[0] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   const handlePrebuiltSelect = async (pc) => {
     try {
       // Parse component_ids from JSON string if it's a string
@@ -70,8 +112,47 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
       }
       
       const componentsForEdit = await fetchComponentsByIds(componentIds);
+
+      // Canonicalize keys to what PCAssembly expects
+      const canon = {};
+      const lowerKeys = Object.keys(componentsForEdit).reduce((acc, k) => { acc[k.toLowerCase()] = componentsForEdit[k]; return acc; }, {});
+      Object.entries(KEY_MAP).forEach(([canonKey, aliases]) => {
+        for (const a of aliases) {
+          if (lowerKeys[a]) { canon[canonKey] = lowerKeys[a]; break; }
+        }
+      });
+      // Keep any already canonical keys
+      Object.keys(componentsForEdit).forEach((k) => {
+        if (KEY_MAP[k]) canon[k] = componentsForEdit[k];
+      });
+
+      // If original prebuilt indicated cooler but it's missing, auto-fill a basic cooler
+      const originalKeySet = Object.keys(componentIds || {}).map(k => k.toLowerCase());
+      const intendedCooler = (KEY_MAP.cooler || []).some(alias => originalKeySet.includes(alias));
+      if (intendedCooler && !canon.cooler) {
+        const fallbackCooler = await fetchCheapestForCategory('cooler');
+        if (fallbackCooler) canon.cooler = fallbackCooler;
+      }
+
+      // Ensure required categories exist; backfill with cheapest sensible options
+      const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
+      const missing = required.filter(k => !canon[k]);
+      if (missing.length > 0) {
+        const results = await Promise.all(missing.map(k => fetchCheapestForCategory(k)));
+        results.forEach((comp, idx) => { if (comp) canon[missing[idx]] = comp; });
+      }
+
+      // Persist selection for consistency across navigation
+      try {
+        localStorage.setItem('builditpc-selected-components', JSON.stringify(canon));
+        localStorage.setItem('builditpc-editing-build', JSON.stringify({
+          name: (pc.name || 'Prebuilt') + ' (Prebuilt)',
+          description: pc.description || ''
+        }));
+      } catch (e) {}
+
       if (setSelectedComponents) {
-        setSelectedComponents(componentsForEdit);
+        setSelectedComponents(canon);
       }
       setCurrentPage('pc-assembly');
     } catch (error) {
@@ -169,17 +250,35 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     setOpenFaq(openFaq === id ? null : id)
   }
 
-  const handleFeedbackSubmit = (e) => {
+  const handleFeedbackSubmit = async (e) => {
     e.preventDefault()
-    // Here you would typically send the feedback to your backend
-    setFeedbackSubmitted(true)
-    setTimeout(() => {
-      setFeedbackSubmitted(false)
-      setFeedbackRating(0)
-      setFeedbackCategory('')
-      setFeedbackMessage('')
-      setShowFeedbackModal(false)
-    }, 3000)
+    try {
+      const res = await fetch(`${API_BASE}/submit_feedback.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: feedbackRating,
+          category: feedbackCategory,
+          message: feedbackMessage,
+        })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (data && data.success) {
+        setFeedbackSubmitted(true)
+        setTimeout(() => {
+          setFeedbackSubmitted(false)
+          setFeedbackRating(0)
+          setFeedbackCategory('')
+          setFeedbackMessage('')
+          setShowFeedbackModal(false)
+        }, 2000)
+      } else {
+        alert('Failed to submit feedback. Please try again later.')
+      }
+    } catch (err) {
+      console.error('Feedback submit error:', err)
+      alert('Failed to submit feedback. Please try again later.')
+    }
   }
 
   const resetFeedbackForm = () => {
@@ -517,12 +616,6 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
               Get Started Now
               <ArrowRight className="w-5 h-5" />
             </button>
-            <button 
-              onClick={() => setCurrentPage('scroll-test')}
-              className="bg-red-500 text-white px-6 lg:px-8 py-3 lg:py-4 rounded-lg font-semibold text-base lg:text-lg hover:bg-red-600 transition-colors flex items-center gap-3"
-            >
-              Test Scroll Bar
-            </button>
           </div>
         </div>
       </section>
@@ -730,14 +823,6 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                     Troubleshooting
                   </button>
                 </li>
-                <li>
-                  <button 
-                    onClick={() => setCurrentPage('help')}
-                    className="text-gray-300 hover:text-white transition-colors"
-                  >
-                    Help Center
-                  </button>
-                </li>
               </ul>
             </div>
 
@@ -757,20 +842,8 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
         <div className="border-t border-gray-800">
           <div className="max-w-7xl mx-auto px-4 lg:px-8 py-6">
             <div className="flex flex-col md:flex-row justify-between items-center">
-              <p className="text-gray-400 text-sm">
-                © 2024 SIMS. All rights reserved.
-              </p>
-              <div className="flex space-x-6 mt-4 md:mt-0">
-                <button className="text-gray-400 hover:text-white transition-colors text-sm">
-                  Privacy Policy
-                </button>
-                <button className="text-gray-400 hover:text-white transition-colors text-sm">
-                  Terms of Service
-                </button>
-                <button className="text-gray-400 hover:text-white transition-colors text-sm">
-                  Cookie Policy
-                </button>
-              </div>
+              <p className="text-gray-400 text-sm">© 2025 SIMS. All rights reserved.</p>
+              <div className="mt-4 md:mt-0" />
             </div>
           </div>
         </div>

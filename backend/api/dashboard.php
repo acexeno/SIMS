@@ -3,23 +3,34 @@
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
+require_once __DIR__ . '/../utils/branch_helper.php';
+require_once __DIR__ . '/auth.php'; // for getBearerToken()
+
+// Local debug helper
+function dashboard_is_debug_enabled() {
+    if (!function_exists('env')) return false;
+    $appDebug = env('APP_DEBUG', '0');
+    return ($appDebug === '1' || strtolower($appDebug) === 'true');
+}
 
 function handleGetDashboardData($pdo) {
     try {
-        $headers = getallheaders();
-        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
-        if (!$authHeader) {
+        // Accept tokens from Authorization header, REDIRECT_HTTP_AUTHORIZATION, JSON body, or ?token
+        $token = getBearerToken();
+        if (!$token) {
             http_response_code(401);
-            echo json_encode(['error' => 'Authorization header missing']);
+            $resp = ['error' => 'Unauthorized'];
+            if (dashboard_is_debug_enabled()) { $resp['debug'] = 'missing_token'; }
+            echo json_encode($resp);
             return;
         }
-
-        $token = str_replace('Bearer ', '', $authHeader);
         $decoded = verifyJWT($token);
 
         if (!$decoded || !isset($decoded['user_id'])) {
             http_response_code(401);
-            echo json_encode(['error' => 'Invalid token']);
+            $resp = ['error' => 'Invalid token'];
+            if (dashboard_is_debug_enabled()) { $resp['debug'] = 'invalid_token'; }
+            echo json_encode($resp);
             return;
         }
         
@@ -49,12 +60,28 @@ function handleGetDashboardData($pdo) {
                 throw $e;
             }
             
-            $data['inventory'] = pdo_get_all($pdo, 'components');
+            // Branch-aware inventory: when branch is provided, override stock to that branch
+            $branchCode = isset($_GET['branch']) ? trim($_GET['branch']) : null;
+            $branchIdParam = isset($_GET['branch_id']) ? intval($_GET['branch_id']) : null;
+            $branchId = null;
+            if ($branchIdParam && $branchIdParam > 0) {
+                $branchId = $branchIdParam;
+            } elseif ($branchCode) {
+                $branchId = get_branch_id_by_code($pdo, $branchCode);
+            }
+
+            if ($branchId) {
+                $data['inventory'] = fetch_components_with_branch_stock($pdo, $branchId);
+            } else {
+                $data['inventory'] = pdo_get_all($pdo, 'components');
+            }
             $data['orders'] = pdo_get_all($pdo, 'orders');
             $data['reports'] = get_reports_data($pdo);
         } else {
             http_response_code(403);
-            echo json_encode(['error' => 'Forbidden']);
+            $resp = ['error' => 'Forbidden'];
+            if (dashboard_is_debug_enabled()) { $resp['debug'] = ['roles_detected' => $roles]; }
+            echo json_encode($resp);
             return;
         }
 

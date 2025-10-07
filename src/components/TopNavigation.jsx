@@ -15,9 +15,16 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
     unreadCount = 0
   }
 
-  const handleLogout = () => {
-    if (window.confirm('Are you sure you want to logout?')) {
+  const handleLogout = (e) => {
+    try { e && e.preventDefault && e.preventDefault(); } catch {}
+    const ok = typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
+    if (!ok) return;
+    if (typeof onLogout === 'function') {
       onLogout();
+    } else {
+      try { localStorage.removeItem('token'); } catch {}
+      try { sessionStorage && sessionStorage.clear && sessionStorage.clear(); } catch {}
+      try { window.location.reload(); } catch {}
     }
   };
 
@@ -73,7 +80,20 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <div className="flex items-center space-x-3">
+          <button 
+            onClick={() => {
+              if (user?.roles?.includes('Super Admin')) {
+                onPageChange('super-admin-dashboard');
+              } else if (user?.roles?.includes('Admin')) {
+                onPageChange('admin-dashboard');
+              } else if (user?.roles?.includes('Employee')) {
+                onPageChange('employee-dashboard');
+              } else {
+                onPageChange('home');
+              }
+            }}
+            className="flex items-center space-x-3 hover:opacity-80 transition-opacity"
+          >
             <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center">
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
@@ -82,7 +102,7 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
             <div>
               <h1 className="text-lg font-bold text-gray-900">SIMS</h1>
             </div>
-          </div>
+          </button>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-8">
@@ -183,7 +203,9 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
 
                     {/* Logout */}
                     <button
-                      onClick={() => {
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
                         handleLogout()
                         setIsUserMenuOpen(false)
                       }}

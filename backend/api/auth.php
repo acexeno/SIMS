@@ -43,6 +43,47 @@ function handleRegister($pdo) {
         return;
     }
     
+    // Enforce OTP for registration (server-side)
+    // Requires client to pass { email, otp_code } previously requested with purpose='register'
+    $otpCode = isset($input['otp_code']) ? trim((string)$input['otp_code']) : '';
+    if ($otpCode === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Verification code is required']);
+        return;
+    }
+
+    // Ensure OTP table exists and verify latest unconsumed, unexpired code for this email and purpose='register'
+    if (function_exists('ensureOtpSchema')) {
+        try { ensureOtpSchema($pdo); } catch (Throwable $t) { /* ignore */ }
+    }
+
+    try {
+        $stmt = $pdo->prepare("SELECT id, code, expires_at, consumed_at FROM otp_codes
+                               WHERE email = ? AND purpose = 'register' AND consumed_at IS NULL AND expires_at >= NOW()
+                               ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$input['email']]);
+        $row = $stmt->fetch();
+
+        if (!$row || !hash_equals($row['code'], $otpCode)) {
+            // best-effort: increment attempt count for telemetry on latest row for this email/purpose
+            try {
+                $inc = $pdo->prepare("UPDATE otp_codes SET attempt_count = attempt_count + 1, last_attempt_at = NOW() WHERE email = ? AND purpose = 'register' ORDER BY id DESC LIMIT 1");
+                $inc->execute([$input['email']]);
+            } catch (Throwable $t) { /* ignore */ }
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid or expired verification code']);
+            return;
+        }
+
+        // Mark the OTP as consumed now to prevent reuse
+        $upd = $pdo->prepare("UPDATE otp_codes SET consumed_at = NOW() WHERE id = ?");
+        $upd->execute([$row['id']]);
+    } catch (Throwable $t) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to verify verification code']);
+        return;
+    }
+
     // check if username or email already exists
     $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
     $stmt->execute([$input['username'], $input['email']]);
@@ -83,13 +124,15 @@ function handleRegister($pdo) {
         $stmt->execute([$userId, $role['id']]);
     }
     
-    // create a JWT token for the new user
+    // create tokens for the new user
     $token = generateJWT($userId, $input['username'], ['Client']);
+    $refreshToken = generateRefreshJWT($userId, $input['username'], ['Client']);
     
     echo json_encode([
         'success' => true,
         'message' => 'User registered successfully',
         'token' => $token,
+        'refresh_token' => $refreshToken,
         'user' => [
             'id' => $userId,
             'username' => $input['username'],
@@ -142,13 +185,15 @@ function handleLogin($pdo) {
     // Parse roles
     $roles = $user['roles'] ? explode(',', $user['roles']) : [];
     
-    // Generate JWT token
+    // Generate tokens
     $token = generateJWT($user['id'], $user['username'], $roles);
+    $refreshToken = generateRefreshJWT($user['id'], $user['username'], $roles);
     
     echo json_encode([
         'success' => true,
         'message' => 'Login successful',
         'token' => $token,
+        'refresh_token' => $refreshToken,
         'user' => [
             'id' => $user['id'],
             'username' => $user['username'],
@@ -373,34 +418,112 @@ function handleLogout() {
 
 // Refresh Token
 function handleRefreshToken($pdo) {
-    // This is a placeholder for a more complex refresh token implementation
-    // A full implementation would involve refresh tokens stored in the database
-    http_response_code(501);
-    echo json_encode(['error' => 'Refresh token functionality not implemented']);
+    // Accept refresh token via JSON body { refresh_token }, Authorization: Bearer <token>, or X-Refresh-Token header
+    $input = json_decode(file_get_contents('php://input'), true);
+    $refresh = null;
+    if (is_array($input) && !empty($input['refresh_token'])) {
+        $refresh = trim($input['refresh_token']);
+    }
+    if (!$refresh) {
+        $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null);
+        if ($authHeader && preg_match('/Bearer\s+(\S+)/i', $authHeader, $m)) {
+            $refresh = $m[1];
+        }
+    }
+    if (!$refresh) {
+        $refresh = $_SERVER['HTTP_X_REFRESH_TOKEN'] ?? null;
+    }
+
+    if (!$refresh) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'No refresh token provided']);
+        return;
+    }
+
+    $payload = verifyRefreshJWT($refresh);
+    if (!$payload || !isset($payload['user_id'])) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'Invalid or expired refresh token']);
+        return;
+    }
+
+    // Ensure user still exists and is active; also get current roles
+    $stmt = $pdo->prepare("SELECT u.*, GROUP_CONCAT(r.name) as roles
+        FROM users u
+        LEFT JOIN user_roles ur ON u.id = ur.user_id
+        LEFT JOIN roles r ON ur.role_id = r.id
+        WHERE u.id = ?
+        GROUP BY u.id");
+    $stmt->execute([$payload['user_id']]);
+    $user = $stmt->fetch();
+
+    if (!$user || !$user['is_active']) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'User not found or deactivated']);
+        return;
+    }
+
+    $roles = $user['roles'] ? explode(',', $user['roles']) : [];
+    $newAccess = generateJWT($user['id'], $user['username'], $roles);
+    // Rotate refresh token to reduce replay risk
+    $newRefresh = generateRefreshJWT($user['id'], $user['username'], $roles);
+
+    echo json_encode([
+        'success' => true,
+        'token' => $newAccess,
+        'refresh_token' => $newRefresh
+    ]);
 }
 
 // Helper function to get bearer token
 function getBearerToken() {
+    // 1) Standard server var
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
-    if ($authHeader) {
-        if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
-            return $matches[1];
+    if ($authHeader && preg_match('/Bearer\s+(\S+)/i', $authHeader, $m)) {
+        return $m[1];
+    }
+
+    // 2) Apache often forwards as REDIRECT_HTTP_AUTHORIZATION
+    $redirAuth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
+    if ($redirAuth && preg_match('/Bearer\s+(\S+)/i', $redirAuth, $m)) {
+        return $m[1];
+    }
+
+    // 3) Fallback to getallheaders() (case-insensitive)
+    if (function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            foreach ($headers as $key => $val) {
+                if (strcasecmp($key, 'Authorization') === 0) {
+                    if (preg_match('/Bearer\s+(\S+)/i', $val, $m)) {
+                        return $m[1];
+                    }
+                    // If no Bearer prefix, assume raw token
+                    if (trim($val) !== '') {
+                        return trim(preg_replace('/^Bearer\s+/i', '', $val));
+                    }
+                }
+            }
         }
     }
-    // Fallback: X-Auth-Token custom header
+
+    // 4) Custom header X-Auth-Token
     $xAuthToken = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? null;
     if ($xAuthToken) {
         return $xAuthToken;
     }
-    // Fallback: token in JSON POST body
+
+    // 5) JSON body field { "token": "..." }
     $input = json_decode(file_get_contents('php://input'), true);
-    if (isset($input['token'])) {
+    if (isset($input['token']) && $input['token']) {
         return $input['token'];
     }
-    // Fallback: token in query string
-    if (isset($_GET['token'])) {
+
+    // 6) Query string ?token=...
+    if (isset($_GET['token']) && $_GET['token']) {
         return $_GET['token'];
     }
+
     return null;
 }
 

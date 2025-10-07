@@ -39,7 +39,8 @@ const EnhancedComponentSelector = ({
   recommendations = [],
   loadingRecommendations = false,
   compatibilityIssues = [],
-  prefetchedComponents = []
+  prefetchedComponents = [],
+  branch = null
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('name');
@@ -47,7 +48,7 @@ const EnhancedComponentSelector = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showIncompatible, setShowIncompatible] = useState(true);
-  const [showCompatibilityDetails, setShowCompatibilityDetails] = useState(false);
+  const [showCompatibilityDetails, setShowCompatibilityDetails] = useState({});
   const [filteredComponents, setFilteredComponents] = useState({ compatible: [], incompatible: [] });
   const [refreshing, setRefreshing] = useState(false);
 
@@ -139,9 +140,9 @@ const EnhancedComponentSelector = ({
       const seq = ++requestSeqRef.current;
       inflightCategoryRef.current = activeCategory;
       const dbCategory = categoryMapping[activeCategory];
-      const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}`;
+      const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
       // Debug logging for difficult-to-reproduce loading states
-      try { console.debug('[ECS] Fetching components:', { activeCategory, dbCategory, url }); } catch {}
+      try { console.debug('[ECS] Fetching components:', { activeCategory, dbCategory, branch, url }); } catch {}
       // Add a safety timeout so the UI never spins forever if the backend hangs
       timeoutRef.current = setTimeout(() => {
         timedOutRef.current = true;
@@ -164,11 +165,32 @@ const EnhancedComponentSelector = ({
 
       if (data.success) {
         try { console.debug('[ECS] Loaded components:', { category: dbCategory, count: Array.isArray(data.data) ? data.data.length : 'n/a' }); } catch {}
-        setComponents(data.data);
+        
+        // Deduplicate components by id, then by name+brand combination
+        const deduplicatedComponents = [];
+        const seenIds = new Set();
+        const seenNames = new Set();
+        
+        if (Array.isArray(data.data)) {
+          data.data.forEach(component => {
+            const id = component.id;
+            const nameKey = `${(component.name || '').toLowerCase().trim()}-${(component.brand || '').toLowerCase().trim()}`;
+            
+            if (id && !seenIds.has(id)) {
+              seenIds.add(id);
+              deduplicatedComponents.push(component);
+            } else if (!id && !seenNames.has(nameKey)) {
+              seenNames.add(nameKey);
+              deduplicatedComponents.push(component);
+            }
+          });
+        }
+        
+        setComponents(deduplicatedComponents);
         // Cache by category key
-        try { cacheRef.current[activeCategory] = Array.isArray(data.data) ? data.data : []; } catch {}
+        try { cacheRef.current[activeCategory] = deduplicatedComponents; } catch {}
         // Filter components based on compatibility
-        const filtered = filterCompatibleComponents(data.data, selectedComponents, activeCategory);
+        const filtered = filterCompatibleComponents(deduplicatedComponents, selectedComponents, activeCategory);
         setFilteredComponents(filtered);
         firstLoadRef.current = false;
       } else {
@@ -208,7 +230,7 @@ const EnhancedComponentSelector = ({
       setRefreshing(false);
       inflightCategoryRef.current = null;
     }
-  }, [activeCategory]);
+  }, [activeCategory, branch]);
 
   // Fallback fetch: fetch all components then filter by category on the client
   const tryFallbackFetch = useCallback(async (categoryKey, dbCategory, signal) => {
@@ -223,12 +245,30 @@ const EnhancedComponentSelector = ({
           return cat === dbCategory.toString().toLowerCase();
         });
         if (list.length > 0) {
-          cacheRef.current[categoryKey] = list;
-          setComponents(list);
-          const filtered = filterCompatibleComponents(list, selectedComponents, categoryKey);
+          // Deduplicate components by id, then by name+brand combination
+          const deduplicatedComponents = [];
+          const seenIds = new Set();
+          const seenNames = new Set();
+          
+          list.forEach(component => {
+            const id = component.id;
+            const nameKey = `${(component.name || '').toLowerCase().trim()}-${(component.brand || '').toLowerCase().trim()}`;
+            
+            if (id && !seenIds.has(id)) {
+              seenIds.add(id);
+              deduplicatedComponents.push(component);
+            } else if (!id && !seenNames.has(nameKey)) {
+              seenNames.add(nameKey);
+              deduplicatedComponents.push(component);
+            }
+          });
+          
+          cacheRef.current[categoryKey] = deduplicatedComponents;
+          setComponents(deduplicatedComponents);
+          const filtered = filterCompatibleComponents(deduplicatedComponents, selectedComponents, categoryKey);
           setFilteredComponents(filtered);
           setError(null);
-          try { console.warn('[ECS] Fallback list used for', dbCategory, 'count=', list.length); } catch {}
+          try { console.warn('[ECS] Fallback list used for', dbCategory, 'count=', deduplicatedComponents.length); } catch {}
         }
       }
     } catch (e) {
@@ -457,7 +497,7 @@ const EnhancedComponentSelector = ({
             onError={(e) => {
               // Use a local placeholder inside the built dist folder
               e.currentTarget.onerror = null;
-              e.currentTarget.src = `${baseNoSlash}/images/placeholder-component.png`;
+              e.currentTarget.src = `${baseNoSlash}/images/placeholder-component.svg`;
             }}
           />
         </div>
@@ -479,28 +519,22 @@ const EnhancedComponentSelector = ({
           )}
         </div>
 
-        {/* Compatibility Details */}
-        {showCompatibilityDetails && component.compatibility && (
+        {/* Compatibility Summary (always visible, helpful bullets) */}
+        {component.compatibility && (
           <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-gray-700">Compatibility:</span>
+            <div className="flex items-center gap-2 mb-1">
               {compatibilityIcon}
+              <span className="text-xs font-medium text-gray-700">Compatibility</span>
             </div>
-            <p className="text-xs text-gray-600">
-              {component.compatibility.reason}
-            </p>
+            {component.compatibility.reason && (
+              <p className="text-xs text-gray-600">{component.compatibility.reason}</p>
+            )}
             {component.compatibility.issues && component.compatibility.issues.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs font-medium text-red-600 mb-1">Issues:</p>
-                <ul className="text-xs text-red-600 space-y-1">
-                  {component.compatibility.issues.map((issue, index) => (
-                    <li key={index} className="flex items-start">
-                      <XCircle className="w-3 h-3 mr-1 mt-0.5 flex-shrink-0" />
-                      {issue}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <ul className="mt-2 text-xs text-red-600 space-y-1 list-disc pl-4">
+                {component.compatibility.issues.slice(0,3).map((issue, index) => (
+                  <li key={index}>{issue}</li>
+                ))}
+              </ul>
             )}
           </div>
         )}
@@ -530,13 +564,7 @@ const EnhancedComponentSelector = ({
             </button>
           )}
           
-          <button
-            onClick={() => setShowCompatibilityDetails(!showCompatibilityDetails)}
-            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
-            title="Toggle compatibility details"
-          >
-            <Info className="w-4 h-4" />
-          </button>
+          {/* Info toggle removed; summary shown above */}
         </div>
       </div>
     );
@@ -595,14 +623,14 @@ const EnhancedComponentSelector = ({
   return (
     <div className="space-y-6">
              {/* Header */}
-       <div className="flex items-center justify-between">
+       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
          <div className="flex items-center gap-3">
            {currentCategory && (
              <>
-               <currentCategory.icon className="w-8 h-8 text-green-600" />
+               <currentCategory.icon className="w-6 h-6 sm:w-8 sm:h-8 text-green-600" />
                <div>
-                 <h2 className="text-xl font-bold text-gray-900">{currentCategory.name}</h2>
-                 <p className="text-sm text-gray-600">{currentCategory.description}</p>
+                 <h2 className="text-lg sm:text-xl font-bold text-gray-900">{currentCategory.name}</h2>
+                 <p className="text-xs sm:text-sm text-gray-600">{currentCategory.description}</p>
                  {/* Special message for cooling */}
                  {activeCategory === 'cooler' && (
                    <div className="mt-1">
@@ -621,35 +649,36 @@ const EnhancedComponentSelector = ({
         <div className="flex items-center gap-4">
           <button
             onClick={() => setShowIncompatible(!showIncompatible)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
               showIncompatible 
                 ? 'bg-red-100 text-red-700' 
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
             {showIncompatible ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-            {showIncompatible ? 'Hide' : 'Show'} Incompatible
+            <span className="hidden sm:inline">{showIncompatible ? 'Hide' : 'Show'} Incompatible</span>
+            <span className="sm:hidden">{showIncompatible ? 'Hide' : 'Show'}</span>
           </button>
         </div>
       </div>
 
       {/* Search and Filter */}
-      <div className="flex flex-col sm:flex-row gap-4">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-400" />
           <input
             type="text"
             placeholder={`Search ${currentCategory?.name || 'components'}...`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            className="w-full pl-9 sm:pl-10 pr-4 py-2.5 sm:py-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
         </div>
         
         <select
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value)}
-          className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          className="px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
         >
           <option value="name">Sort by Name</option>
           <option value="price">Sort by Price</option>
@@ -991,7 +1020,7 @@ const EnhancedComponentSelector = ({
               <CheckCircle className="w-5 h-5 text-green-500" />
               Compatible Components ({sortedCompatible.length})
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
               {sortedCompatible.map(component => renderComponentCard(component, true))}
             </div>
           </div>
@@ -1004,7 +1033,7 @@ const EnhancedComponentSelector = ({
               <XCircle className="w-5 h-5 text-red-500" />
               Incompatible Components ({sortedIncompatible.length})
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
               {sortedIncompatible.map(component => renderComponentCard(component, false))}
             </div>
           </div>

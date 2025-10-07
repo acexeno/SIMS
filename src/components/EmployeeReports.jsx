@@ -16,7 +16,6 @@ import {
 } from 'recharts';
 import { 
   Calendar, 
-  DollarSign, 
   Package, 
   PieChart as PieIcon, 
   BarChart2, 
@@ -27,6 +26,7 @@ import {
   Truck,
   RefreshCw
 } from 'lucide-react';
+import { formatCurrencyPHP } from '../utils/currency';
 
 const COLORS = [
   '#6366F1', // indigo
@@ -53,16 +53,8 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
   const [salesChartType, setSalesChartType] = useState('monthly');
   const [isLoading, setIsLoading] = useState(true);
   
-  // Format currency with NaN/undefined/null handling
-  const formatCurrency = (amount) => {
-    const value = Number(amount) || 0;
-    return new Intl.NumberFormat('en-PH', {
-      style: 'currency',
-      currency: 'PHP',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value).replace('₱', '₱');
-  };
+  // Use centralized currency formatting
+  const formatCurrency = (amount) => formatCurrencyPHP(amount);
 
   // Destructure with defaults
   const {
@@ -191,7 +183,7 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
         <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-indigo-50 text-indigo-600">
-              <DollarSign className="h-6 w-6" />
+              <span className="text-xl font-bold">₱</span>
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Total Sales</p>

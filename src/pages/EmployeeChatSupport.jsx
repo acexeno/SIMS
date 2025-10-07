@@ -357,7 +357,7 @@ const EmployeeChatSupport = ({ user }) => {
       <div className="w-1/3 min-w-[350px] max-w-sm border-r bg-white flex flex-col shadow-lg h-full">
         {/* Header with stats toggle */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
-          <h2 className="text-xl font-bold text-gray-800">Chat Support</h2>
+          <h2 className="page-title">Chat Support</h2>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowStats(!showStats)}

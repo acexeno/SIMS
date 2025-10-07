@@ -1,11 +1,17 @@
 import React from 'react';
-import { Settings, Monitor, Bell, Cpu, BarChart3, Users, Package, Truck, Wrench, FileText, TrendingUp, MessageSquare, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Settings, Monitor, Bell, Cpu, BarChart3, Users, Package, Wrench, FileText, TrendingUp, MessageSquare, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabChange, activeSuperAdminTab, notificationsCount, isCollapsed, onToggleCollapse }) => {
-  // handle user logout with confirmation
-  const handleLogout = () => {
-    if (window.confirm('Are you sure you want to logout?')) {
+  // handle user logout (no native confirm to avoid blocked dialogs in embedded browsers)
+  const handleLogout = (e) => {
+    try { e && e.preventDefault && e.preventDefault(); } catch {}
+    if (typeof onLogout === 'function') {
       onLogout();
+    } else {
+      // Fallback: ensure token cleared and hard reload
+      try { localStorage.removeItem('token'); } catch {}
+      try { sessionStorage && sessionStorage.clear && sessionStorage.clear(); } catch {}
+      try { window.location.reload(); } catch {}
     }
   };
 
@@ -32,7 +38,6 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
     { id: 'system-reports', name: 'Sales Reports', icon: <FileText className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'inventory', name: 'Inventory', icon: <Package className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'orders-management', name: 'Orders', icon: <FileText className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
-    { id: 'supplier-management', name: 'Supplier', icon: <Truck className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'pc-assembly', name: 'PC Assembly', icon: <Cpu className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'prebuilt-management', name: 'Prebuilt', icon: <Monitor className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'admin-chat-support', name: 'Chat Support', icon: <MessageSquare className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
@@ -46,7 +51,6 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
     { id: 'system-reports', name: 'Sales Reports', icon: <FileText className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'inventory', name: 'Inventory', icon: <Package className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'orders-management', name: 'Orders', icon: <FileText className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
-    { id: 'supplier-management', name: 'Supplier', icon: <Users className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'pc-assembly', name: 'PC Assembly', icon: <Cpu className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'prebuilt-management', name: 'Prebuilt', icon: <Monitor className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'admin-chat-support', name: 'Chat Support', icon: <MessageSquare className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> }
@@ -93,11 +97,12 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
         transition-[width] duration-300 ease-in-out
       `}>
         {/* Collapse toggle */}
-        <div className="absolute top-4 right-4 z-50">
+        <div className={`absolute ${isCollapsed ? 'top-1/2 -translate-y-1/2' : 'top-4'} right-2 lg:right-3 z-50 transition-all`}>
           <button
             onClick={onToggleCollapse}
             className="bg-white p-2 rounded-md shadow-lg border"
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
           </button>
@@ -272,7 +277,9 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
         {/* logout button */}
         <div className="p-3 lg:p-4 border-t border-gray-200">
           <button
+            type="button"
             onClick={handleLogout}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleLogout(e); }}
             className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-center gap-2'} px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-lg font-semibold transition-colors duration-200`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -26,11 +26,28 @@ import {
   MessageCircle,
   Tag,
   Coins,
-  CheckSquare
+  CheckSquare,
+  Clock,
+  XCircle,
+  X
 } from 'lucide-react';
+import { formatCurrencyPHP } from '../utils/currency';
+import { getCompatibilityScore as calcCompatibility } from '../utils/compatibilityService';
 // import Prebuilts from '../data/Prebuilts' // Remove static import
 
 const API_URL = `${API_BASE}/prebuilts.php`;
+
+// Canonical key mapping for component categories (module scope)
+const KEY_MAP = {
+  cpu: ['cpu', 'processor', 'procie', 'procie only', 'processor only'],
+  motherboard: ['motherboard', 'mobo'],
+  gpu: ['gpu', 'graphics', 'graphics card', 'video', 'video card', 'vga'],
+  ram: ['ram', 'memory', 'ram 3200mhz', 'ddr', 'ddr4', 'ddr5'],
+  storage: ['storage', 'ssd', 'nvme', 'ssd nvme', 'hdd', 'hard drive', 'drive'],
+  psu: ['psu', 'power supply', 'psu - tr', 'tr psu'],
+  case: ['case', 'chassis', 'case gaming'],
+  cooler: ['cooler', 'coolers', 'aio', 'cooling', 'cpu cooler', 'water cooling', 'liquid cooler', 'fan', 'heatsink']
+};
 
 // Helper to fetch full component objects by IDs
 async function fetchComponentsByIds(componentIds) {
@@ -91,6 +108,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
   const [sortBy, setSortBy] = useState('name');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [prebuiltFilterPrice, setPrebuiltFilterPrice] = useState('all');
   
   // Community builds state
   const [publicBuilds, setPublicBuilds] = useState([]);
@@ -159,6 +177,44 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
       fetchSubmissionStats();
     }
   }, [user]);
+
+  // Helpers for brand badge and quick spec extraction from description/name
+  const getBrandBadge = (pc) => {
+    const brand = getBrand(pc);
+    if (brand === 'amd') {
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-semibold">
+          AMD
+        </span>
+      );
+    }
+    if (brand === 'intel') {
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold">
+          Intel
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-semibold">
+        Mixed
+      </span>
+    );
+  };
+
+  const extractQuickSpecs = (pc) => {
+    const text = `${pc.name || ''} ${pc.description || ''}`;
+    const cpuMatch = text.match(/(R[3579] \d{3,4}X?|Ryzen\s?\d|i[3579]-?\d{3,5}|Intel\s?Core\s?i[3579]-?\d{3,5})/i);
+    const gpuMatch = text.match(/(RTX\s?\d{3,4}|GTX\s?\d{3,4}|RX\s?\d{3,4}|Arc\s?\w+|IGPU)/i);
+    const ramMatch = text.match(/(\d{2,3})\s?GB\s?(DDR\d)?/i);
+    const storageMatch = text.match(/(\d(?:\.\d)?\s?TB|\d{3,4}\s?GB)\s?(NVME|SSD|HDD)?/i);
+    return {
+      cpu: cpuMatch ? cpuMatch[0] : null,
+      gpu: gpuMatch ? gpuMatch[0] : null,
+      ram: ramMatch ? `${ramMatch[1]}GB` : null,
+      storage: storageMatch ? storageMatch[0].replace(/\s+/g, ' ') : null,
+    };
+  };
 
   // Helper to determine brand from CPU name
   const getBrand = (pc) => {
@@ -234,27 +290,30 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
         return;
       }
       // Canonicalize category keys to match Assembly expectations
-      const keyMap = {
-        cpu: ['cpu', 'processor', 'procie', 'procie only', 'processor only'],
-        motherboard: ['motherboard', 'mobo'],
-        gpu: ['gpu', 'graphics', 'graphics card', 'video', 'video card', 'vga'],
-        ram: ['ram', 'memory', 'ram 3200mhz', 'ddr', 'ddr4', 'ddr5'],
-        storage: ['storage', 'ssd', 'nvme', 'ssd nvme', 'hdd', 'hard drive', 'drive'],
-        psu: ['psu', 'power supply', 'psu - tr', 'tr psu'],
-        case: ['case', 'chassis', 'case gaming'],
-        cooler: ['cooler', 'aio', 'cooling', 'cpu cooler']
-      };
       const canon = {};
       const lowerKeys = Object.keys(componentsForEdit).reduce((acc, k) => { acc[k.toLowerCase()] = componentsForEdit[k]; return acc; }, {});
-      Object.entries(keyMap).forEach(([canonKey, aliases]) => {
+      Object.entries(KEY_MAP).forEach(([canonKey, aliases]) => {
         for (const a of aliases) {
           if (lowerKeys[a]) { canon[canonKey] = lowerKeys[a]; break; }
         }
       });
       // Keep any already canonical keys
       Object.keys(componentsForEdit).forEach((k) => {
-        if (keyMap[k]) canon[k] = componentsForEdit[k];
+        if (KEY_MAP[k]) canon[k] = componentsForEdit[k];
       });
+
+      // If original prebuilt intended a cooler but fetch missed it (e.g., stale ID), auto-fill a cooler
+      const originalKeySet = Object.keys(componentIds || {}).map(k => k.toLowerCase());
+      const intendedCooler = (KEY_MAP.cooler || []).some(alias => originalKeySet.includes(alias));
+      if (intendedCooler && !canon.cooler) {
+        const fallbackCooler = await fetchCheapestForCategory('cooler');
+        if (fallbackCooler) canon.cooler = fallbackCooler;
+      }
+      // Also, if the prebuilt itself is categorized as "cooling", ensure we include a cooler
+      if (String(pc.category || '').toLowerCase() === 'cooling' && !canon.cooler) {
+        const fallbackCooler2 = await fetchCheapestForCategory('cooler');
+        if (fallbackCooler2) canon.cooler = fallbackCooler2;
+      }
       // Auto-complete any missing required categories with a sensible cheapest option
       const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
       const missing = required.filter(k => !canon[k]);
@@ -328,12 +387,12 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
     return isNaN(num) ? 0 : num;
   };
 
-  const handleUseBuild = (build) => {
-    let componentsForEdit = {};
+  const handleUseBuild = async (build) => {
+    let componentsTemp = {};
     if (Array.isArray(build.components)) {
       build.components.forEach(component => {
         if (component && component.category) {
-          componentsForEdit[component.category.toLowerCase()] = component;
+          componentsTemp[component.category.toLowerCase()] = component;
         }
       });
     } else if (build.components && typeof build.components === 'object') {
@@ -341,22 +400,61 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
       if (keys.every(key => !isNaN(Number(key)))) {
         Object.values(build.components).forEach(component => {
           if (component && component.category) {
-            componentsForEdit[component.category.toLowerCase()] = component;
+            componentsTemp[component.category.toLowerCase()] = component;
           }
         });
       } else {
-        componentsForEdit = { ...build.components };
+        componentsTemp = { ...build.components };
       }
     }
 
-    localStorage.setItem('builditpc-selected-components', JSON.stringify(componentsForEdit));
-    localStorage.setItem('builditpc-editing-build', JSON.stringify({
-      name: build.name + ' (Copy)',
-      description: build.description + ' - Shared by ' + build.creator_name
-    }));
+    // Canonicalize keys (e.g., 'cooling' -> 'cooler') and retain canonical keys
+    const canon = {};
+    const lowerKeys = Object.keys(componentsTemp).reduce((acc, k) => { acc[k.toLowerCase()] = componentsTemp[k]; return acc; }, {});
+    Object.entries(KEY_MAP).forEach(([canonKey, aliases]) => {
+      for (const a of aliases) {
+        if (lowerKeys[a]) { canon[canonKey] = lowerKeys[a]; break; }
+      }
+    });
+    Object.keys(componentsTemp).forEach((k) => {
+      if (KEY_MAP[k]) canon[k] = componentsTemp[k];
+    });
+
+    // Auto-complete any missing required categories with a sensible cheapest option
+    const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
+    const missing = required.filter(k => !canon[k]);
+    if (missing.length > 0) {
+      const results = await Promise.all(missing.map(k => fetchCheapestForCategory(k)));
+      results.forEach((comp, idx) => { if (comp) canon[missing[idx]] = comp; });
+    }
+
+    // If the community build included a cooling component by intent but it's missing (stale ID), auto-fill one
+    let intendedCooler = false;
+    if (Array.isArray(build.components)) {
+      intendedCooler = build.components.some(c => {
+        const cat = (c?.category || '').toLowerCase();
+        return (KEY_MAP.cooler || []).some(alias => cat.includes(alias));
+      });
+    } else if (build.components && typeof build.components === 'object') {
+      const lowerKeys2 = Object.keys(build.components).map(k => k.toLowerCase());
+      intendedCooler = (KEY_MAP.cooler || []).some(alias => lowerKeys2.includes(alias));
+    }
+    if (intendedCooler && !canon.cooler) {
+      const fallbackCooler = await fetchCheapestForCategory('cooler');
+      if (fallbackCooler) canon.cooler = fallbackCooler;
+    }
+
+    // Persist selections
+    try {
+      localStorage.setItem('builditpc-selected-components', JSON.stringify(canon));
+      localStorage.setItem('builditpc-editing-build', JSON.stringify({
+        name: build.name + ' (Copy)',
+        description: build.description + ' - Shared by ' + build.creator_name
+      }));
+    } catch {}
 
     if (typeof setSelectedComponents === 'function') {
-      setSelectedComponents(componentsForEdit);
+      setSelectedComponents(canon);
     }
 
     setCurrentPage('pc-assembly');
@@ -373,8 +471,8 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
   const isAdminUser = () => {
     if (!user || !user.roles) return false;
     const roles = Array.isArray(user.roles) ? user.roles : user.roles.split(',').map(r => r.trim());
-    // Restrict management actions to Admin/Super Admin to match backend permissions
-    return roles.some(role => ['Admin', 'Super Admin'].includes(role));
+    // Allow Admin, Super Admin, and Employee (matches backend permissions)
+    return roles.some(role => ['Admin', 'Super Admin', 'Employee'].includes(role));
   };
 
   // Fetch community submissions (for admins)
@@ -460,6 +558,17 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
     }
   };
 
+  // Persist recalculated community compatibility score (fire-and-forget)
+  const persistCommunityCompatibility = async (buildId, score) => {
+    try {
+      await fetch(`${API_BASE}/update_build_compatibility.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ build_id: buildId, compatibility: score })
+      });
+    } catch {}
+  };
+
   // Filter and sort community builds
   const filteredAndSortedBuilds = publicBuilds
     .filter(build => 
@@ -467,6 +576,39 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
       build.description.toLowerCase().includes(communitySearchTerm.toLowerCase()) ||
       build.creator_name.toLowerCase().includes(communitySearchTerm.toLowerCase())
     )
+    // Recompute compatibility when missing/zero and we have component data
+    .map(build => {
+      try {
+        const hasScore = typeof build.compatibility === 'number' && build.compatibility > 0;
+        const comps = Array.isArray(build.components) ? build.components : Object.values(build.components || {});
+        if (!hasScore && comps.length > 0) {
+          const keyAliases = {
+            cpu: ['cpu','processor','procie'],
+            motherboard: ['motherboard','mobo'],
+            gpu: ['gpu','graphics card','graphics','video card','vga'],
+            ram: ['ram','memory'],
+            storage: ['storage','ssd','hdd','nvme'],
+            psu: ['psu','power supply'],
+            case: ['case','chassis'],
+            cooler: ['cooler','cooling','aio']
+          };
+          const selected = {};
+          comps.forEach(c => {
+            const cat = String(c?.category || '').toLowerCase();
+            const canon = Object.keys(keyAliases).find(k => k === cat || keyAliases[k].some(a => cat.includes(a)));
+            if (canon) selected[canon] = c;
+          });
+          const comp = calcCompatibility(selected);
+          if (comp && typeof comp.score === 'number') {
+            const updated = { ...build, compatibility: comp.score };
+            // Persist in background
+            if (build.id) persistCommunityCompatibility(build.id, comp.score);
+            return updated;
+          }
+        }
+      } catch {}
+      return build;
+    })
     .filter(build => {
       const price = safePrice(build.totalPrice);
       switch (communityFilterPrice) {
@@ -497,6 +639,31 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
         default:
           return 0;
       }
+    });
+
+  // Derived prebuilt list with price filter
+  const priceToNumber = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const filteredPrebuilts = prebuilts
+    .filter(pc => selectedCategory === 'all' || pc.category === selectedCategory)
+    .filter(pc => selectedBrand === 'all' || getBrand(pc) === selectedBrand)
+    .filter(pc => pc.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .filter(pc => {
+      const p = priceToNumber(pc.price);
+      switch (prebuiltFilterPrice) {
+        case 'under-50k': return p < 50000;
+        case '50k-100k': return p >= 50000 && p < 100000;
+        case '100k-200k': return p >= 100000 && p < 200000;
+        case 'over-200k': return p >= 200000;
+        default: return true;
+      }
+    })
+    .sort((a, b) => {
+      if (sortBy === 'price-asc') return priceToNumber(a.price) - priceToNumber(b.price);
+      if (sortBy === 'price-desc') return priceToNumber(b.price) - priceToNumber(a.price);
+      return String(a.name).localeCompare(String(b.name));
     });
 
   return (
@@ -563,7 +730,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
         {activeTab === 'prebuilts' && (
           <>
             {/* Filters and Search */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+            <div className="card mb-8">
               <div className="flex flex-col lg:flex-row gap-4">
                 {/* Search */}
                 <div className="flex-1 relative">
@@ -640,13 +807,59 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
               </div>
             </div>
 
+            {/* Prebuilt Controls */}
+            <div className="card mb-6 p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Sort</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="name">Name</option>
+                  <option value="price-asc">Price: Low to High</option>
+                  <option value="price-desc">Price: High to Low</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Price Range</label>
+                <select
+                  value={prebuiltFilterPrice}
+                  onChange={(e) => setPrebuiltFilterPrice(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="all">All</option>
+                  <option value="under-50k">Under ₱50,000</option>
+                  <option value="50k-100k">₱50,000 - ₱100,000</option>
+                  <option value="100k-200k">₱100,000 - ₱200,000</option>
+                  <option value="over-200k">Over ₱200,000</option>
+                </select>
+              </div>
+            </div>
+
             {/* Prebuilt PCs Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {filteredPCs.map((pc) => (
+              {loading && Array.from({length:6}).map((_,i)=> (
+                <div key={`s-${i}`} className="card p-6 animate-pulse">
+                  <div className="h-5 w-2/3 bg-gray-200 rounded mb-3" />
+                  <div className="h-4 w-full bg-gray-100 rounded mb-2" />
+                  <div className="h-4 w-5/6 bg-gray-100 rounded mb-2" />
+                  <div className="h-4 w-1/2 bg-gray-100 rounded" />
+                </div>
+              ))}
+              {!loading && filteredPrebuilts.length === 0 && (
+                <div className="col-span-full">
+                  <div className="card p-8 text-center text-gray-600">
+                    <Package className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                    No prebuilts match your filters.
+                  </div>
+                </div>
+              )}
+              {!loading && filteredPrebuilts.map((pc) => (
                 <div 
                   key={pc.id} 
                   onClick={() => handleCardClick(pc)}
-                  className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 cursor-pointer transform hover:scale-105 hover:border-green-300"
+                  className="card relative cursor-pointer hover:border-green-300"
                 >
                   {/* Badges */}
                   <div className="absolute top-4 left-4 flex gap-2">
@@ -663,8 +876,36 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
 
                   {/* Content */}
                   <div className="p-6">
-                    <h2 className="text-xl font-bold text-gray-900 mb-2">{pc.name}</h2>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <h2 className="text-xl font-bold text-gray-900">{pc.name}</h2>
+                      {getBrandBadge(pc)}
+                    </div>
                     <div className="text-gray-600 mb-2">{pc.description}</div>
+                    {/* Quick Specs */}
+                    {(() => { const specs = extractQuickSpecs(pc); return (
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {specs.cpu && (
+                          <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 text-xs">
+                            CPU: {specs.cpu}
+                          </span>
+                        )}
+                        {specs.gpu && (
+                          <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 text-xs">
+                            GPU: {specs.gpu}
+                          </span>
+                        )}
+                        {specs.ram && (
+                          <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 text-xs">
+                            RAM: {specs.ram}
+                          </span>
+                        )}
+                        {specs.storage && (
+                          <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-800 text-xs">
+                            Storage: {specs.storage}
+                          </span>
+                        )}
+                      </div>
+                    ); })()}
                     <ul className="list-disc list-inside space-y-1 text-sm text-gray-600 mb-2">
                       <li className="flex items-center gap-1">
                         <Tag className="w-4 h-4 text-green-500" />
@@ -672,7 +913,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                       </li>
                       <li className="flex items-center gap-1">
                         <Coins className="w-4 h-4 text-green-500" />
-                        <span className="font-medium">Price:</span> ₱{(Number(pc.price) || 0).toLocaleString()}
+                        <span className="font-medium">Price:</span> {formatCurrencyPHP(pc.price)}
                       </li>
                     </ul>
                   </div>
@@ -711,14 +952,14 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
               
               {publicBuilds.length > 0 && (
                 <div className="mb-6 text-gray-700 text-lg">
-                  Total builds: {filteredAndSortedBuilds.length} &nbsp; • &nbsp; Total value: ₱{filteredAndSortedBuilds.reduce((sum, build) => sum + safePrice(build.totalPrice), 0).toLocaleString()}
+                  Total builds: {filteredAndSortedBuilds.length} &nbsp; • &nbsp; Total value: {formatCurrencyPHP(filteredAndSortedBuilds.reduce((sum, build) => sum + safePrice(build.totalPrice), 0))}
                 </div>
               )}
             </div>
 
             {/* Community Filters and Search */}
             {publicBuilds.length > 0 && (
-              <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+              <div className="card mb-6 p-4">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -826,7 +1067,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                             </div>
                             <div className="flex items-center gap-1">
                               <Package className="w-4 h-4" />
-                              ₱{safePrice(build.totalPrice).toLocaleString()}
+                              {formatCurrencyPHP(safePrice(build.totalPrice))}
                             </div>
                           </div>
                         </div>
@@ -863,7 +1104,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                           <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">
                             <div className="text-xs font-medium text-gray-600 mb-1">{component.category}</div>
                             <div className="text-sm font-semibold text-gray-900 truncate">{component.name}</div>
-                            <div className="text-xs text-gray-500">₱{Number(component.price || 0).toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">{formatCurrencyPHP(component.price || 0)}</div>
                           </div>
                         ))}
                         {(Array.isArray(build.components) ? build.components : Object.values(build.components || {})).length > 8 && (
@@ -997,7 +1238,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                           </div>
                           <div className="flex items-center gap-1">
                             <Package className="w-4 h-4" />
-                            ₱{Number(submission.total_price).toLocaleString()}
+                            {formatCurrencyPHP(submission.total_price)}
                           </div>
                           <div className="flex items-center gap-1">
                             <CheckCircle className="w-4 h-4" />
@@ -1092,7 +1333,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                           </div>
                           <div>
                             <h3 className="font-semibold text-gray-900">Total Price</h3>
-                            <p className="text-2xl font-bold text-blue-600">₱{Number(selectedBuild.totalPrice || 0).toLocaleString()}</p>
+                            <p className="text-2xl font-bold text-blue-600">{formatCurrencyPHP(selectedBuild.totalPrice || 0)}</p>
                           </div>
                         </div>
                         <p className="text-sm text-gray-600">All components included</p>
@@ -1133,7 +1374,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                             // Define the desired order of components
                             const order = [
                               'motherboard', 'cpu', 'gpu', 'ram', 
-                              'storage', 'psu', 'case', 'cooling'
+                              'storage', 'psu', 'case', 'cooler'
                             ];
                             const aIndex = order.indexOf(a.category.toLowerCase());
                             const bIndex = order.indexOf(b.category.toLowerCase());
@@ -1160,7 +1401,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                                     {component.category}
                                   </span>
                                   <span className="text-lg font-bold text-green-600">
-                                    ₱{Number(component.price || 0).toLocaleString()}
+                                    {formatCurrencyPHP(component.price || 0)}
                                   </span>
                                 </div>
                                 <h4 className="font-semibold text-gray-900 text-lg mb-2 line-clamp-2">
@@ -1287,7 +1528,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Total Price</label>
-                      <p className="text-gray-900 font-medium">₱{Number(selectedSubmission.total_price).toLocaleString()}</p>
+                      <p className="text-gray-900 font-medium">{formatCurrencyPHP(selectedSubmission.total_price)}</p>
                     </div>
                   </div>
                 </div>

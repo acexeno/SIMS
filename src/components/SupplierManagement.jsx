@@ -14,7 +14,6 @@ import {
   Mail,
   MapPin,
   Calendar,
-  DollarSign,
   ShoppingCart,
   CheckCircle,
   XCircle,
@@ -52,7 +51,12 @@ const SupplierManagement = ({ user }) => {
   // Check if token is expired
   const isTokenExpired = (token) => {
     try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
+      const part = token.split('.')[1];
+      if (!part) return true;
+      // base64url -> base64 with padding
+      let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const payload = JSON.parse(atob(b64));
       if (!payload.exp) return false;
       return Date.now() >= payload.exp * 1000;
     } catch {
@@ -65,8 +69,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -76,8 +78,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -94,8 +94,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -105,8 +103,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -123,8 +119,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -134,8 +128,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -152,8 +144,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -163,8 +153,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -197,8 +185,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -213,8 +199,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -233,8 +217,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -249,8 +231,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -270,8 +250,6 @@ const SupplierManagement = ({ user }) => {
       try {
         if (!token || isTokenExpired(token)) {
           console.error('Token expired or missing');
-          localStorage.removeItem('token');
-          window.location.reload();
           return;
         }
         
@@ -282,8 +260,6 @@ const SupplierManagement = ({ user }) => {
         
         if (response.status === 401) {
           console.error('Unauthorized - token may be invalid');
-          localStorage.removeItem('token');
-          window.location.reload();
           return;
         }
         
@@ -301,8 +277,6 @@ const SupplierManagement = ({ user }) => {
     try {
       if (!token || isTokenExpired(token)) {
         console.error('Token expired or missing');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       
@@ -317,8 +291,6 @@ const SupplierManagement = ({ user }) => {
       
       if (response.status === 401) {
         console.error('Unauthorized - token may be invalid');
-        localStorage.removeItem('token');
-        window.location.reload();
         return;
       }
       

@@ -4,11 +4,98 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
 header('Content-Type: application/json');
 
+// Error visibility controlled by APP_DEBUG
+$__app_debug = env('APP_DEBUG', '0');
+if ($__app_debug === '1' || strtolower($__app_debug) === 'true') {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+} else {
+    error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
+    ini_set('display_errors', '0');
+}
+set_exception_handler(function($ex){
+    http_response_code(500);
+    echo json_encode(['error' => 'Internal server error', 'message' => $ex->getMessage()]);
+    exit;
+});
+set_error_handler(function($errno, $errstr, $errfile, $errline){
+    // Convert warnings/notices into exceptions so we can return JSON
+    throw new ErrorException($errstr, 0, $errno, $errfile, $errline);
+});
+register_shutdown_function(function(){
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        if (!headers_sent()) {
+            header('Content-Type: application/json');
+            http_response_code(500);
+        }
+        echo json_encode(['error' => 'Fatal server error', 'message' => $e['message']]);
+    }
+});
+
+// Fallback for environments where getallheaders() is unavailable (e.g., PHP-FPM)
+if (!function_exists('build_request_headers')) {
+    function build_request_headers() {
+        $headers = [];
+        foreach ($_SERVER as $name => $value) {
+            if (substr($name, 0, 5) === 'HTTP_') {
+                $key = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))));
+                $headers[$key] = $value;
+            }
+        }
+        // Common locations for Authorization
+        if (!isset($headers['Authorization']) && isset($_SERVER['Authorization'])) {
+            $headers['Authorization'] = $_SERVER['Authorization'];
+        }
+        if (!isset($headers['Authorization']) && isset($_SERVER['HTTP_AUTHORIZATION'])) {
+            $headers['Authorization'] = $_SERVER['HTTP_AUTHORIZATION'];
+        }
+        return $headers;
+    }
+}
+
 $pdo = get_db_connection();
 $method = $_SERVER['REQUEST_METHOD'];
+// Admin-only seed toggle (ENV-controlled)
+$seedEnabled = env('PREBUILTS_SEED_ENABLED', '0');
+$seedToken   = env('PREBUILTS_SEED_TOKEN', '');
+
+// Lightweight diagnostics (safe while APP_DEBUG is enabled)
+if (($__app_debug === '1' || strtolower($__app_debug) === 'true') && isset($_GET['test'])) {
+    $t = $_GET['test'];
+    if ($t === 'ping') {
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    if ($t === 'tables') {
+        try {
+            $rows = $pdo->query("SHOW TABLES LIKE 'prebuilts'")->fetchAll(PDO::FETCH_NUM);
+            echo json_encode(['ok' => true, 'match_count' => count($rows), 'rows' => $rows]);
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['error' => 'tables_check_failed', 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+    if ($t === 'count') {
+        try {
+            $stmt = $pdo->query('SELECT COUNT(*) AS c FROM prebuilts');
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            echo json_encode(['ok' => true, 'count' => (int)($row['c'] ?? 0)]);
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['error' => 'count_failed', 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+}
 
 function get_authenticated_user($pdo) {
-    $headers = getallheaders();
+    $headers = function_exists('getallheaders') ? getallheaders() : (function_exists('build_request_headers') ? build_request_headers() : []);
+    // Normalize lowercase key variant if present
+    if (!isset($headers['Authorization']) && isset($headers['authorization'])) {
+        $headers['Authorization'] = $headers['authorization'];
+    }
     if (!isset($headers['Authorization'])) return null;
     $token = str_replace('Bearer ', '', $headers['Authorization']);
     $payload = verifyJWT($token);
@@ -264,20 +351,61 @@ function require_admin_or_superadmin($user) {
 
 switch ($method) {
     case 'GET':
-        $user = get_authenticated_user($pdo);
-        $show_all = isset($_GET['all']) && $user && (in_array('Super Admin', $user['roles'] ?? []) || in_array('Admin', $user['roles'] ?? []));
-        $sql = 'SELECT * FROM prebuilts';
-        if (!$show_all) {
-            $sql .= ' WHERE is_hidden = 0';
+        try {
+            $user = get_authenticated_user($pdo);
+            $show_all = isset($_GET['all']) && $user && (in_array('Super Admin', $user['roles'] ?? []) || in_array('Admin', $user['roles'] ?? []));
+            $sql = 'SELECT * FROM prebuilts';
+            if (!$show_all) {
+                $sql .= ' WHERE is_hidden = 0';
+            }
+            $stmt = $pdo->query($sql);
+            $prebuilts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Best-effort decode/sanitize JSON-like columns and ensure UTF-8 output
+            foreach ($prebuilts as &$row) {
+                foreach (['performance', 'features', 'component_ids'] as $jsonField) {
+                    if (isset($row[$jsonField])) {
+                        $val = $row[$jsonField];
+                        if (is_string($val)) {
+                            $decoded = json_decode($val, true);
+                            if (json_last_error() === JSON_ERROR_NONE) {
+                                $row[$jsonField] = $decoded;
+                            }
+                        }
+                    }
+                }
+            }
+            unset($row);
+
+            $out = json_encode($prebuilts, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($out === false) {
+                http_response_code(500);
+                $msg = 'JSON encoding failed';
+                if ($__app_debug === '1' || strtolower($__app_debug) === 'true') {
+                    $msg .= ': ' . json_last_error_msg();
+                }
+                echo json_encode(['error' => 'Failed to fetch prebuilts', 'message' => $msg]);
+            } else {
+                echo $out;
+            }
+        } catch (Throwable $t) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to fetch prebuilts', 'message' => $t->getMessage()]);
         }
-        $stmt = $pdo->query($sql);
-        $prebuilts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($prebuilts);
         break;
     case 'POST':
         $user = get_authenticated_user($pdo);
         // Seeding endpoint: POST ?seed=1
         if (isset($_GET['seed'])) {
+            // If ENV toggle and token match, allow seeding without JWT (admin-only toggle)
+            $enabled = ($seedEnabled === '1' || strtolower($seedEnabled) === 'true');
+            $providedToken = $_GET['token'] ?? ($_SERVER['HTTP_X_SEED_TOKEN'] ?? null);
+            if ($enabled && $seedToken && $providedToken && hash_equals($seedToken, $providedToken)) {
+                // Bypass JWT but still treat as Super Admin for this action
+                seed_prebuilts($pdo, ['roles' => ['Super Admin']]);
+                break;
+            }
+            // Fallback to normal auth requirement
             seed_prebuilts($pdo, $user);
             break; // seed_prebuilts exits after echo
         }

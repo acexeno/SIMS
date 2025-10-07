@@ -212,7 +212,7 @@ const componentImages = {
 const fallbackImages = {
   cpu: [
     "/images/components/cpu/R3 3200G (TRAY) WITH HEATSINK FAN.png",
-    "/images/components/cpu/R5 5600G (TRAY) WITH HEATSINK FAN.png",
+    "/images/components/cpu/r5_5600G_tray.png",
     "/images/components/cpu/R5 5600X (TRAY) WITH HEATSINK FAN.png",
     "/images/components/cpu/R7 5700X (TRAY) WITH HEATSINK FAN.png",
     "/images/components/cpu/R7 5800X (TRAY) WITH HEATSINK FAN.png",
@@ -328,6 +328,11 @@ export function getComponentImage(component, componentType = null) {
   
   // Try partial matching for common patterns
   const lowerName = componentName.toLowerCase();
+
+  // Early CPU pattern for common shorthand without the word 'ryzen'
+  if (lowerName.includes('5600g')) {
+    return resolveAssetPath("/images/components/cpu/r5_5600G_tray.png");
+  }
   
   // CPU matching
   if (lowerName.includes('ryzen')) {

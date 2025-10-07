@@ -30,6 +30,34 @@ const Notifications = ({ user }) => {
     }
   }
 
+  const renderMessage = (message, type) => {
+    if (!message) return null
+    if (type === 'stock') {
+      const lines = message.split('\n').filter(l => l.trim().length > 0)
+      const intro = lines[0] || ''
+      // Extract bullet lines starting with '-'
+      const bulletLines = lines.slice(1).filter(l => l.trim().startsWith('-'))
+      // Footer is any non-bullet last line
+      const nonBulletTail = lines.slice(1).filter(l => !l.trim().startsWith('-'))
+      const footer = nonBulletTail.length > 0 ? nonBulletTail[nonBulletTail.length - 1] : ''
+      return (
+        <div>
+          {intro && <p className="text-sm text-gray-600 mt-1">{intro}</p>}
+          {bulletLines.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-gray-600 mt-1 space-y-1">
+              {bulletLines.map((l, idx) => (
+                <li key={idx}>{l.replace(/^[-\s]+/, '')}</li>
+              ))}
+            </ul>
+          )}
+          {footer && <p className="text-sm text-gray-600 mt-2">{footer}</p>}
+        </div>
+      )
+    }
+    // Default: preserve newlines
+    return <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{message}</p>
+  }
+
   const getPriorityColor = (priority) => {
     switch (priority) {
       case 'high':
@@ -47,18 +75,31 @@ const Notifications = ({ user }) => {
     if (!timestamp || isNaN(timestamp.getTime())) {
       return "Unknown time";
     }
-    const now = new Date()
-    const diff = now - timestamp
-    const minutes = Math.floor(diff / (1000 * 60))
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+    const diffMs = Date.now() - timestamp.getTime();
+    const absMs = Math.abs(diffMs);
+    const minutes = Math.floor(absMs / (1000 * 60));
+    const hours = Math.floor(absMs / (1000 * 60 * 60));
+    const days = Math.floor(absMs / (1000 * 60 * 60 * 24));
+
+    // Clamp very small discrepancies to "just now"
+    if (absMs < 60 * 1000) return 'just now';
+
+    const inFuture = diffMs < 0;
+    const suffixPast = ' ago';
+    const prefixFuture = 'in ';
 
     if (minutes < 60) {
-      return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`
+      return inFuture
+        ? `${prefixFuture}${minutes} minute${minutes !== 1 ? 's' : ''}`
+        : `${minutes} minute${minutes !== 1 ? 's' : ''}${suffixPast}`
     } else if (hours < 24) {
-      return `${hours} hour${hours !== 1 ? 's' : ''} ago`
+      return inFuture
+        ? `${prefixFuture}${hours} hour${hours !== 1 ? 's' : ''}`
+        : `${hours} hour${hours !== 1 ? 's' : ''}${suffixPast}`
     } else {
-      return `${days} day${days !== 1 ? 's' : ''} ago`
+      return inFuture
+        ? `${prefixFuture}${days} day${days !== 1 ? 's' : ''}`
+        : `${days} day${days !== 1 ? 's' : ''}${suffixPast}`
     }
   }
 
@@ -162,9 +203,7 @@ const Notifications = ({ user }) => {
                       <h3 className={`text-sm font-medium ${!notification.read ? 'text-gray-900' : 'text-gray-700'}`}>
                         {notification.title}
                       </h3>
-                      <p className="text-sm text-gray-600 mt-1">
-                        {notification.message}
-                      </p>
+                      {renderMessage(notification.message, notification.type)}
                       <div className="flex items-center mt-2 text-xs text-gray-500">
                         <Clock className="w-3 h-3 mr-1" />
                         {formatTimestamp(notification.timestamp)}
