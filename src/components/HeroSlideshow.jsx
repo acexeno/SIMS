@@ -33,7 +33,7 @@ const HeroSlideshow = ({ setCurrentPage }) => {
             ...comp,
             category: categoryIdToName[Number(comp.category_id)] || comp.category_id
           }));
-          // Parse price, sort by price descending, deduplicate by id or brand+name, and keep 15 unique items
+          // Parse price, sort by price descending, deduplicate by id or brand+name, and keep 10 unique items
           const withPrice = filtered
             .map(comp => ({
               ...comp,
@@ -68,7 +68,7 @@ const HeroSlideshow = ({ setCurrentPage }) => {
             unique.push(comp);
           }
 
-          const TARGET_COUNT = 15;
+          const TARGET_COUNT = 10;
           const finalList = unique.slice(0, TARGET_COUNT);
           setComponents(finalList);
         } else {
@@ -223,7 +223,7 @@ const HeroSlideshow = ({ setCurrentPage }) => {
             if (!window.__loggedImages) window.__loggedImages = {};
             const logKey = component?.id || `${component?.brand || ''}-${component?.name || ''}`;
             if (logKey && !window.__loggedImages[logKey]) {
-              console.log(`HeroSlideshow: [${component?.name}] image_url=`, bgImage);
+              // HeroSlideshow: Component image loaded
               window.__loggedImages[logKey] = true;
             }
           }

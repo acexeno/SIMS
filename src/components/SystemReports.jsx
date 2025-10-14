@@ -38,7 +38,7 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
   ];
   const componentCategories = (categories || []).filter(cat => allowedCategoryNames.includes(cat.name));
   const deadstockComponentIds = inventory.filter(item => {
-    const cat = categories.find(c => String(c.id) === String(item.category_id));
+    const cat = (categories || []).find(c => String(c.id) === String(item.category_id));
     return cat && allowedCategoryNames.includes(cat.name);
   }).map(item => item.id);
   const filteredDeadstockRaw = deadstock.filter(item => deadstockComponentIds.includes(item.id));

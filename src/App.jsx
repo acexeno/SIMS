@@ -1,3 +1,7 @@
+/**
+ * App root: routes between storefront and role-based dashboards, manages auth state,
+ * and coordinates sidebars/layout. Public pages vs admin/employee areas are separated.
+ */
 import React, { useState, useCallback, useEffect } from 'react'
 import { API_BASE } from './utils/apiBase'
 import { ensureValidToken, authorizedFetch } from './utils/auth'
@@ -7,6 +11,8 @@ import EmployeeSidebar from './components/EmployeeSidebar'
 import TopNavigation from './components/TopNavigation'
 import Home from './pages/Home'
 import PCAssembly from './pages/PCAssembly'
+import AdminPCAssembly from './pages/AdminPCAssembly'
+import EmployeePCAssembly from './pages/EmployeePCAssembly'
 import DynamicChatAccess from './components/DynamicChatAccess'
 import MyBuilds from './pages/MyBuilds'
 import MyOrders from './pages/MyOrders'
@@ -29,10 +35,10 @@ import NotificationManager from './components/NotificationManager'
 import FloatingChatButton from './components/FloatingChatButton';
 import './App.css'
 
-// these are the pages that need login to access
+// Protected pages require user session
 const PROTECTED_PAGES = ['my-builds', 'my-orders', 'notifications']
 
-// check if the JWT token has expired (supports base64url)
+// Parse token locally to decide initial route; network verification follows
 function isTokenExpired(token) {
   try {
     const part = token.split('.')[1];
@@ -343,6 +349,10 @@ const AppContent = () => {
                 localStorage.removeItem('builditpc_chat_session_id');
                 localStorage.removeItem('builditpc_guest_name');
                 setUser(u);
+                
+                // Add a small delay to ensure tokens are properly stored
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
                 // grab the user's chat session if they have one
                 if (u && u.id) {
                   try {
@@ -380,15 +390,11 @@ const AppContent = () => {
               <>
                 {/* show different dashboards based on user role */}
                 {currentPage === 'super-admin-dashboard' && user?.roles?.includes('Super Admin') && (
-                  <SuperAdminDashboard initialTab={superAdminTab} user={user} />
+                  <SuperAdminDashboard initialTab={superAdminTab} user={user} setUser={setUser} />
                 )}
                 {currentPage === 'admin-dashboard' && user?.roles?.includes('Admin') && (
                   <AdminDashboard user={user} />
                 )}
-                {currentPage === 'prebuilt-management' && user?.roles?.includes('Admin') && (
-                  <AdminDashboard initialTab="prebuilt-management" user={user} />
-                )}
-
                 {currentPage === 'sales-reports' && user?.roles?.includes('Admin') && (
                   <AdminDashboard initialTab="sales-reports" user={user} />
                 )}
@@ -404,6 +410,9 @@ const AppContent = () => {
                 {currentPage === 'orders-management' && user?.roles?.includes('Admin') && (
                   <AdminDashboard initialTab="orders" user={user} />
                 )}
+                {currentPage === 'prebuilt-management' && user?.roles?.includes('Admin') && (
+                  <AdminDashboard initialTab="prebuilt-management" user={user} />
+                )}
                                                  {currentPage === 'employee-dashboard' && user?.roles?.includes('Employee') && (
                   <EmployeeDashboard user={user} setUser={setUser} initialTab="employee-dashboard" />
                 )}
@@ -416,10 +425,10 @@ const AppContent = () => {
                   <PrebuiltPCs user={user} setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} onPrebuiltSelect={handlePrebuiltSelect} />
                 )}
                 {currentPage === 'pc-assembly' && user?.roles?.includes('Super Admin') && (
-                  <SuperAdminDashboard initialTab="pc-assembly" />
+                  <SuperAdminDashboard initialTab="pc-assembly" user={user} setUser={setUser} />
                 )}
                 {currentPage === 'pc-assembly' && user?.roles?.includes('Admin') && (
-                  <PCAssembly 
+                  <AdminPCAssembly 
                     setCurrentPage={setCurrentPage}
                     setSelectedComponents={setSelectedComponents} 
                     selectedComponents={prebuiltComponentIds || selectedComponents} 
@@ -433,7 +442,7 @@ const AppContent = () => {
                   />
                 )}
                 {currentPage === 'pc-assembly' && user?.roles?.includes('Employee') && (
-                  <PCAssembly 
+                  <EmployeePCAssembly 
                     setCurrentPage={setCurrentPage}
                     setSelectedComponents={setSelectedComponents} 
                     selectedComponents={prebuiltComponentIds || selectedComponents} 
@@ -490,7 +499,7 @@ const AppContent = () => {
                 
                 {/* admin/employee management pages */}
                 {['inventory', 'orders-management', 'reports'].includes(currentPage) && user?.roles?.includes('Super Admin') && (
-                  <SuperAdminDashboard initialTab={currentPage} user={user} />
+                  <SuperAdminDashboard initialTab={currentPage} user={user} setUser={setUser} />
                 )}
                 {['inventory', 'orders-management', 'prebuilt-management', 'sales-reports', 'system-reports', 'notifications'].includes(currentPage) && user?.roles?.includes('Employee') && (
                   // Check permissions before routing to specific tabs
@@ -507,7 +516,7 @@ const AppContent = () => {
 
                 {/* super admin only pages */}
                 {['user-management', 'system-settings', 'system-reports', 'prebuilt-management'].includes(currentPage) && user?.roles?.includes('Super Admin') && (
-                  <SuperAdminDashboard initialTab={currentPage} user={user} />
+                  <SuperAdminDashboard initialTab={currentPage} user={user} setUser={setUser} />
                 )}
 
                 {/* super admin and admin prebuilt management */}
@@ -542,7 +551,7 @@ const AppContent = () => {
                         }
                       }
                     } catch (e) { 
-                      console.error('Error fetching chat sessions:', e);
+                      // Error fetching chat sessions
                     }
                   }
                   setShowAuth(null);

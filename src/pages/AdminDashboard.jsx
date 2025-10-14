@@ -1,6 +1,10 @@
+/**
+ * AdminDashboard: consolidated admin area with inventory, orders, feedback,
+ * and reporting. Uses authorizedFetch for token-aware API calls.
+ */
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/apiBase'
-import { ensureValidToken, authorizedFetch } from '../utils/auth'
+import { ensureValidToken, authorizedFetch, waitForAuth } from '../utils/auth'
 
 import { 
   BarChart3, 
@@ -220,7 +224,7 @@ const FeedbackTab = () => {
   const fetchFeedback = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/view_feedback.php`);
+      const response = await authorizedFetch(`${API_BASE}/view_feedback.php`);
       const data = await response.json();
       if (data.success) {
         setFeedback(data.data);
@@ -306,7 +310,7 @@ const FeedbackTab = () => {
                       {item.subject}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.rating > 0 ? `${item.rating}/5 ⭐` : 'No rating'}
+                      {item.rating > 0 ? `${item.rating}/5` : 'No rating'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(item.status)}`}>
@@ -366,7 +370,7 @@ const FeedbackTab = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Rating</label>
                   <p className="mt-1 text-sm text-gray-900">
-                    {selectedFeedback.rating > 0 ? `${selectedFeedback.rating}/5 ⭐` : 'No rating provided'}
+                    {selectedFeedback.rating > 0 ? `${selectedFeedback.rating}/5` : 'No rating provided'}
                   </p>
                 </div>
                 
@@ -417,7 +421,7 @@ const AdminDashboard = ({ initialTab, user }) => {
   const fetchFeedback = async () => {
     setFeedbackLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/view_feedback.php`);
+      const response = await authorizedFetch(`${API_BASE}/view_feedback.php`);
       const data = await response.json();
       if (data.success) {
         setFeedback(data.data);
@@ -438,15 +442,10 @@ const AdminDashboard = ({ initialTab, user }) => {
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        alert('You must be logged in to update order status.');
-        return;
-      }
-      const res = await fetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}`, {
+      // Check if user is logged in
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: newStatus })
@@ -475,19 +474,29 @@ const AdminDashboard = ({ initialTab, user }) => {
       setIsLoading(true);
       setError(null);
       try {
-        let token = await ensureValidToken();
+        // Wait for authentication to be ready
+        let token = await waitForAuth();
         if (!token) {
           setError('Session expired. Please log in again.');
           setIsLoading(false);
           return;
         }
+        
+        console.log('Fetching dashboard data...');
         const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=dashboard&period=${deadstockPeriod}${branch ? `&branch=${branch}` : ''}`);
+
+        if (response.status === 401) {
+          setError('Authentication failed. Please log in again.');
+          setIsLoading(false);
+          return;
+        }
 
         const text = await response.text();
         let result;
         try {
           result = JSON.parse(text);
         } catch (jsonErr) {
+          console.error('JSON parse error:', jsonErr);
           setError('Server returned invalid JSON.');
           return;
         }
@@ -497,20 +506,26 @@ const AdminDashboard = ({ initialTab, user }) => {
           setInventory(data.inventory || []);
           setOrders(data.orders || []);
           setReports(data.reports || {});
+          console.log('Dashboard data loaded successfully');
         } else {
+          console.error('API error:', result.error);
           setError(result.error || 'API call was not successful');
         }
       } catch (error) {
-        setError('Error fetching admin dashboard data.');
         console.error("Error fetching admin dashboard data:", error);
+        setError('Error fetching admin dashboard data.');
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchData();
+    // Add a small delay before initial fetch to ensure login is complete
+    const timeoutId = setTimeout(fetchData, 200);
     const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -549,7 +564,7 @@ const AdminDashboard = ({ initialTab, user }) => {
     const fetchCategories = async () => {
       setCategoriesLoading(true);
       try {
-        const response = await fetch(`${API_BASE}/index.php?endpoint=categories`);
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=categories`);
         const result = await response.json();
         if (result.success && Array.isArray(result.data)) {
           setCategories(result.data);
@@ -932,10 +947,9 @@ const AdminDashboard = ({ initialTab, user }) => {
                           onClick={async () => {
                             if (!window.confirm(`Delete '${item.name}'?`)) return;
                             try {
-                              const token = localStorage.getItem('token');
-                              const res = await fetch(`${API_BASE}/index.php?endpoint=delete_component`, {
+                              const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=delete_component`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ id: item.id })
                               });
                               const result = await res.json();
@@ -1190,10 +1204,7 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
       if (!form.id) return;
       setLoadingBranch(true);
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${API_BASE}/index.php?endpoint=component_stock&component_id=${form.id}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=component_stock&component_id=${form.id}`);
         const data = await res.json().catch(() => ({}));
         if (res.ok && data && data.success && data.data && Array.isArray(data.data.branches)) {
           const map = { BULACAN: '', MARIKINA: '' };
@@ -1214,11 +1225,10 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     e.preventDefault();
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
       const endpoint = form.id ? 'update_component' : 'create_component';
-      const res = await fetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
       const result = await res.json();

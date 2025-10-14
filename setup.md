@@ -178,7 +178,7 @@ WHERE u.username = 'client' AND r.name = 'Client';
 - ✅ Reporting and analytics
 - ✅ Responsive design
 
-## 🔧 **Configuration**
+## **Configuration**
 
 ### **JWT Settings**
 Edit `backend/utils/jwt_helper.php`:

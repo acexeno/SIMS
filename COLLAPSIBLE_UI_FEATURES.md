@@ -76,7 +76,7 @@ All major information sections in the PC Assembly system now feature **collapsib
 - **Case Guide**: Indigo theme (`bg-indigo-50`, `text-indigo-700`, `border-indigo-200`)
 - **Cooling Guide**: Cyan theme (`bg-cyan-50`, `text-cyan-700`, `border-cyan-200`) 🆕
 
-## 🔧 **Technical Implementation**
+## **Technical Implementation**
 
 ### **State Management**
 ```javascript

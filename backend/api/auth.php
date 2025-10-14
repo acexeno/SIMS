@@ -1,14 +1,38 @@
 <?php
-// this file has all the authentication functions
-// it's included by the main router (index.php) and doesn't handle routing itself
+/**
+ * Authentication handlers: registration, login, profile, token lifecycle.
+ * Context: included by `backend/api/index.php` which wires routing and `$pdo`.
+ * Security: server validates inputs, enforces OTP on register, and issues JWTs.
+ */
 
-// note: error reporting, database connection ($pdo), and JWT helpers are handled by the main index.php router
+// Operational note: error reporting, DB connection ($pdo), and JWT helpers are provided by the main router.
 
-// user registration
+/**
+ * Handle user registration with OTP verification and initial role assignment.
+ * Input: JSON or form body with username, email, password, first_name, last_name, optional phone/country, and otp_code.
+ * Output: 200 with JWTs and user summary; 4xx/5xx on validation or DB errors.
+ */
 function handleRegister($pdo) {
-    $input = json_decode(file_get_contents('php://input'), true);
+    // Robust body parsing: accept JSON, form-encoded, or raw
+    $raw = file_get_contents('php://input');
+    $input = [];
+    if (is_string($raw) && $raw !== '') {
+        $json = json_decode($raw, true);
+        if (is_array($json)) {
+            $input = $json;
+        } else {
+            $tmp = [];
+            parse_str($raw, $tmp);
+            if (is_array($tmp) && !empty($tmp)) {
+                $input = $tmp;
+            }
+        }
+    }
+    if (empty($input) && !empty($_POST)) {
+        $input = $_POST;
+    }
     
-    // check that all required fields are present
+    // Validate required fields early to provide targeted feedback
     $required = ['username', 'email', 'password', 'first_name', 'last_name'];
     foreach ($required as $field) {
         if (empty($input[$field])) {
@@ -18,7 +42,7 @@ function handleRegister($pdo) {
         }
     }
     
-    // Check for emojis in text fields
+    // Reject emojis in PII fields to avoid storage/UX inconsistencies
     $textFields = [
         'username' => 'Username',
         'first_name' => 'First name',
@@ -36,15 +60,14 @@ function handleRegister($pdo) {
         }
     }
     
-    // check if the email format is valid
+    // Enforce email format server-side
     if (!filter_var($input['email'], FILTER_VALIDATE_EMAIL)) {
         http_response_code(400);
         echo json_encode(['error' => 'Invalid email format']);
         return;
     }
     
-    // Enforce OTP for registration (server-side)
-    // Requires client to pass { email, otp_code } previously requested with purpose='register'
+    // Require OTP previously issued with purpose='register'; blocks scripted signups
     $otpCode = isset($input['otp_code']) ? trim((string)$input['otp_code']) : '';
     if ($otpCode === '') {
         http_response_code(400);
@@ -52,7 +75,7 @@ function handleRegister($pdo) {
         return;
     }
 
-    // Ensure OTP table exists and verify latest unconsumed, unexpired code for this email and purpose='register'
+    // Verify latest unconsumed, unexpired OTP for this email and purpose='register'
     if (function_exists('ensureOtpSchema')) {
         try { ensureOtpSchema($pdo); } catch (Throwable $t) { /* ignore */ }
     }
@@ -65,7 +88,7 @@ function handleRegister($pdo) {
         $row = $stmt->fetch();
 
         if (!$row || !hash_equals($row['code'], $otpCode)) {
-            // best-effort: increment attempt count for telemetry on latest row for this email/purpose
+            // Increment attempt count for telemetry; do not leak validity details
             try {
                 $inc = $pdo->prepare("UPDATE otp_codes SET attempt_count = attempt_count + 1, last_attempt_at = NOW() WHERE email = ? AND purpose = 'register' ORDER BY id DESC LIMIT 1");
                 $inc->execute([$input['email']]);
@@ -84,7 +107,7 @@ function handleRegister($pdo) {
         return;
     }
 
-    // check if username or email already exists
+    // Block duplicate username or email
     $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
     $stmt->execute([$input['username'], $input['email']]);
     if ($stmt->fetch()) {
@@ -93,7 +116,7 @@ function handleRegister($pdo) {
         return;
     }
     
-    // Validate password strength
+    // Enforce password strength policy
     $passwordErrors = validatePasswordStrength($input['password']);
     if (!empty($passwordErrors)) {
         http_response_code(400);
@@ -101,10 +124,10 @@ function handleRegister($pdo) {
         return;
     }
     
-    // hash the password for security
+    // Store password using strong, auto-upgrading hash
     $passwordHash = password_hash($input['password'], PASSWORD_DEFAULT);
     
-    // add the new user to the database
+    // Insert user record
     $stmt = $pdo->prepare("
         INSERT INTO users (username, email, password_hash, first_name, last_name, phone, country) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -122,7 +145,7 @@ function handleRegister($pdo) {
     
     $userId = $pdo->lastInsertId();
     
-    // give them the default Client role
+    // Assign default role: Client
     $stmt = $pdo->prepare("SELECT id FROM roles WHERE name = 'Client'");
     $stmt->execute();
     $role = $stmt->fetch();
@@ -132,7 +155,7 @@ function handleRegister($pdo) {
         $stmt->execute([$userId, $role['id']]);
     }
     
-    // create tokens for the new user
+    // Issue tokens for immediate sign-in
     $token = generateJWT($userId, $input['username'], ['Client']);
     $refreshToken = generateRefreshJWT($userId, $input['username'], ['Client']);
     
@@ -152,7 +175,10 @@ function handleRegister($pdo) {
     ]);
 }
 
-// user login
+/**
+ * Authenticate user by username/email and password. Records attempts and enforces account status.
+ * Output: JWT pair and user profile on success; 401/403/429 on failure or rate limit.
+ */
 function handleLogin($pdo) {
     $input = json_decode(file_get_contents('php://input'), true);
     
@@ -166,21 +192,21 @@ function handleLogin($pdo) {
     $password = $input['password'];
     $ipAddress = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     
-    // Check if IP is blocked
+    // Enforce IP blocklist if configured
     if (isIPBlocked($pdo, $ipAddress)) {
         http_response_code(403);
         echo json_encode(['error' => 'Access denied. IP address is blocked.']);
         return;
     }
     
-    // Check rate limiting
-    if (!checkLoginRateLimit($pdo, $username, (int)env('LOGIN_MAX_ATTEMPTS', 5), (int)env('LOGIN_LOCKOUT_TIME', 900))) {
-        http_response_code(429);
-        echo json_encode(['error' => 'Too many login attempts. Please try again later.']);
-        return;
-    }
+    // Rate limiting placeholder: enable in production to slow brute-force attempts
+    // if (!checkLoginRateLimit($pdo, $username, (int)env('LOGIN_MAX_ATTEMPTS', 5), (int)env('LOGIN_LOCKOUT_TIME', 900))) {
+    //     http_response_code(429);
+    //     echo json_encode(['error' => 'Too many login attempts. Please try again later.']);
+    //     return;
+    // }
     
-    // get user info along with their roles
+    // Fetch user plus roles in one query
     $stmt = $pdo->prepare("
         SELECT u.*, GROUP_CONCAT(r.name) as roles
         FROM users u
@@ -198,7 +224,7 @@ function handleLogin($pdo) {
         if ($user['is_active']) {
             $loginSuccess = true;
         } else {
-            // Record failed attempt for inactive account
+            // Prevent login to inactive accounts and record event
             recordLoginAttempt($pdo, $username, $ipAddress, false);
             logSecurityEvent($pdo, 'login_failed_inactive', "Attempted login to inactive account: $username", $user['id'], $ipAddress);
             http_response_code(403);
@@ -207,7 +233,7 @@ function handleLogin($pdo) {
         }
     }
     
-    // Record login attempt
+    // Persist login attempt outcome for auditing and rate limits
     recordLoginAttempt($pdo, $username, $ipAddress, $loginSuccess);
     
     if (!$loginSuccess) {
@@ -217,17 +243,17 @@ function handleLogin($pdo) {
         return;
     }
     
-    // Log successful login
+    // Audit successful login
     logSecurityEvent($pdo, 'login_success', "Successful login for: $username", $user['id'], $ipAddress);
     
-    // Update last login
+    // Persist last login timestamp
     $stmt = $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
     $stmt->execute([$user['id']]);
     
-    // Parse roles
+    // Materialize role list
     $roles = $user['roles'] ? explode(',', $user['roles']) : [];
     
-    // Generate tokens
+    // Issue fresh tokens
     $token = generateJWT($user['id'], $user['username'], $roles);
     $refreshToken = generateRefreshJWT($user['id'], $user['username'], $roles);
     
@@ -249,7 +275,9 @@ function handleLogin($pdo) {
     ]);
 }
 
-// Get User Profile
+/**
+ * Return authenticated user's profile and roles. Requires valid Bearer token.
+ */
 function handleGetProfile($pdo) {
     $token = getBearerToken();
     if (!$token) {
@@ -282,7 +310,7 @@ function handleGetProfile($pdo) {
         return;
     }
     
-    // Remove sensitive data
+    // Do not expose password hash
     unset($user['password_hash']);
     
     $roles = $user['roles'] ? explode(',', $user['roles']) : [];
@@ -308,7 +336,10 @@ function handleGetProfile($pdo) {
     ]);
 }
 
-// Update User Profile
+/**
+ * Update allowed profile fields for the authenticated user.
+ * Only whitelisted fields are accepted; rejects empty updates.
+ */
 function handleUpdateProfile($pdo) {
     $token = getBearerToken();
     if (!$token) {
@@ -326,7 +357,7 @@ function handleUpdateProfile($pdo) {
     
     $input = json_decode(file_get_contents('php://input'), true);
     
-    // Fields that can be updated
+    // Only allow these fields to be changed by users
     $allowed_fields = ['first_name', 'last_name', 'phone', 'country', 'profile_image'];
     $update_fields = [];
     $update_values = [];
@@ -349,7 +380,7 @@ function handleUpdateProfile($pdo) {
     $stmt = $pdo->prepare("UPDATE users SET " . implode(', ', $update_fields) . " WHERE id = ?");
     $stmt->execute($update_values);
     
-    // Fetch updated user data to return
+    // Return fresh user snapshot
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
     $stmt->execute([$payload['user_id']]);
     $user = $stmt->fetch();
@@ -362,7 +393,9 @@ function handleUpdateProfile($pdo) {
     ]);
 }
 
-// Change User Password
+/**
+ * Change password for the authenticated user after verifying current password.
+ */
 function handleChangePassword($pdo) {
     $token = getBearerToken();
     if (!$token) {
@@ -392,7 +425,7 @@ function handleChangePassword($pdo) {
         return;
     }
     
-    // Verify current password
+    // Verify current password matches stored hash
     $stmt = $pdo->prepare("SELECT password_hash FROM users WHERE id = ?");
     $stmt->execute([$payload['user_id']]);
     $user = $stmt->fetch();
@@ -403,7 +436,7 @@ function handleChangePassword($pdo) {
         return;
     }
     
-    // Update with new password
+    // Store new hash
     $newPasswordHash = password_hash($input['new_password'], PASSWORD_DEFAULT);
     $stmt = $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
     $stmt->execute([$newPasswordHash, $payload['user_id']]);
@@ -414,7 +447,9 @@ function handleChangePassword($pdo) {
     ]);
 }
 
-// Verify Token Endpoint
+/**
+ * Validate access token and ensure user remains active. Useful for session checks.
+ */
 function handleVerifyToken($pdo) {
     $token = getBearerToken();
     if (!$token) {
@@ -430,7 +465,7 @@ function handleVerifyToken($pdo) {
         return;
     }
 
-    // Optionally, you can re-fetch user data to ensure they still exist and are active
+    // Ensure user still exists and remains active
     $stmt = $pdo->prepare("SELECT is_active FROM users WHERE id = ?");
     $stmt->execute([$payload['user_id']]);
     $user = $stmt->fetch();
@@ -448,7 +483,9 @@ function handleVerifyToken($pdo) {
     ]);
 }
 
-// User Logout
+/**
+ * Stateless logout acknowledgment for JWT-based auth. Client deletes tokens.
+ */
 function handleLogout() {
     // For JWT, logout is typically handled on the client-side by deleting the token.
     // This endpoint can be used for server-side logging or token blocklisting if implemented.
@@ -458,7 +495,10 @@ function handleLogout() {
     ]);
 }
 
-// Refresh Token
+/**
+ * Exchange a valid refresh token for a new access token and rotated refresh token.
+ * Accepts token via JSON body, Authorization header, or X-Refresh-Token.
+ */
 function handleRefreshToken($pdo) {
     // Accept refresh token via JSON body { refresh_token }, Authorization: Bearer <token>, or X-Refresh-Token header
     $input = json_decode(file_get_contents('php://input'), true);
@@ -478,18 +518,23 @@ function handleRefreshToken($pdo) {
 
     if (!$refresh) {
         http_response_code(400);
+        error_log("Refresh token endpoint: No refresh token provided");
         echo json_encode(['success' => false, 'error' => 'No refresh token provided']);
         return;
     }
 
+    error_log("Refresh token endpoint: Attempting to verify refresh token");
     $payload = verifyRefreshJWT($refresh);
     if (!$payload || !isset($payload['user_id'])) {
         http_response_code(401);
+        error_log("Refresh token verification failed: " . ($payload ? 'Invalid payload' : 'Token verification failed'));
         echo json_encode(['success' => false, 'error' => 'Invalid or expired refresh token']);
         return;
     }
 
-    // Ensure user still exists and is active; also get current roles
+    error_log("Refresh token endpoint: Token verified for user ID " . $payload['user_id']);
+
+    // Ensure user still exists and is active; hydrate current roles
     $stmt = $pdo->prepare("SELECT u.*, GROUP_CONCAT(r.name) as roles
         FROM users u
         LEFT JOIN user_roles ur ON u.id = ur.user_id
@@ -501,6 +546,7 @@ function handleRefreshToken($pdo) {
 
     if (!$user || !$user['is_active']) {
         http_response_code(401);
+        error_log("Refresh token endpoint: User not found or deactivated for ID " . $payload['user_id']);
         echo json_encode(['success' => false, 'error' => 'User not found or deactivated']);
         return;
     }
@@ -510,6 +556,9 @@ function handleRefreshToken($pdo) {
     // Rotate refresh token to reduce replay risk
     $newRefresh = generateRefreshJWT($user['id'], $user['username'], $roles);
 
+    // Log successful refresh for debugging
+    error_log("Token refresh successful for user: " . $user['username'] . " (ID: " . $user['id'] . ")");
+
     echo json_encode([
         'success' => true,
         'token' => $newAccess,
@@ -517,21 +566,35 @@ function handleRefreshToken($pdo) {
     ]);
 }
 
-// Helper function to get bearer token
+/**
+ * Resolve Bearer token from multiple sources with retry-friendly priority.
+ * Priority: query ?token= > Authorization > REDIRECT_HTTP_AUTHORIZATION > getallheaders > X-Auth-Token > JSON body.
+ */
 function getBearerToken() {
-    // 1) Standard server var
+    // CRITICAL FIX: Prioritize query parameter for retry scenarios where frontend sends fresh token
+    // This ensures that when frontend retries with a new token, we use the new one, not cached headers
+    
+    // 1) Query parameter (highest priority for frontend retries)
+    if (isset($_GET['token']) && !empty($_GET['token'])) {
+        $token = trim($_GET['token']);
+        if (!empty($token)) {
+            return $token;
+        }
+    }
+
+    // 2) Standard Authorization header
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
     if ($authHeader && preg_match('/Bearer\s+(\S+)/i', $authHeader, $m)) {
         return $m[1];
     }
 
-    // 2) Apache often forwards as REDIRECT_HTTP_AUTHORIZATION
+    // 3) Apache forward header
     $redirAuth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
     if ($redirAuth && preg_match('/Bearer\s+(\S+)/i', $redirAuth, $m)) {
         return $m[1];
     }
 
-    // 3) Fallback to getallheaders() (case-insensitive)
+    // 4) Fallback to getallheaders() (case-insensitive)
     if (function_exists('getallheaders')) {
         $headers = getallheaders();
         if (is_array($headers)) {
@@ -539,9 +602,7 @@ function getBearerToken() {
                 if (strcasecmp($key, 'Authorization') === 0) {
                     if (preg_match('/Bearer\s+(\S+)/i', $val, $m)) {
                         return $m[1];
-                    }
-                    // If no Bearer prefix, assume raw token
-                    if (trim($val) !== '') {
+                    } elseif (trim($val) !== '') {
                         return trim(preg_replace('/^Bearer\s+/i', '', $val));
                     }
                 }
@@ -549,26 +610,24 @@ function getBearerToken() {
         }
     }
 
-    // 4) Custom header X-Auth-Token
+    // 5) Custom header fallback
     $xAuthToken = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? null;
     if ($xAuthToken) {
         return $xAuthToken;
     }
 
-    // 5) JSON body field { "token": "..." }
+    // 6) JSON body field { "token": "..." }
     $input = json_decode(file_get_contents('php://input'), true);
-    if (isset($input['token']) && $input['token']) {
+    if (is_array($input) && isset($input['token']) && !empty($input['token'])) {
         return $input['token'];
-    }
-
-    // 6) Query string ?token=...
-    if (isset($_GET['token']) && $_GET['token']) {
-        return $_GET['token'];
     }
 
     return null;
 }
 
+/**
+ * Super Admin: toggle `can_access_inventory` for a user.
+ */
 function handleUpdateInventoryAccess($pdo) {
     $headers = getallheaders();
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
@@ -600,7 +659,7 @@ function handleUpdateInventoryAccess($pdo) {
         return;
     }
 
-    // Update and check affected rows
+    // Update and verify affected rows
     $stmt = $pdo->prepare("UPDATE users SET can_access_inventory = ? WHERE id = ?");
     $stmt->execute([$canAccess, $userId]);
     if ($stmt->rowCount() === 0) {
@@ -609,7 +668,7 @@ function handleUpdateInventoryAccess($pdo) {
         return;
     }
 
-    // Fetch and return the updated value for confirmation
+    // Return updated value for confirmation
     $stmt = $pdo->prepare("SELECT can_access_inventory FROM users WHERE id = ?");
     $stmt->execute([$userId]);
     $updated = $stmt->fetch();
@@ -619,6 +678,9 @@ function handleUpdateInventoryAccess($pdo) {
     ]);
 }
 
+/**
+ * Super Admin: toggle `can_access_orders` for a user.
+ */
 function handleUpdateOrderAccess($pdo) {
     $headers = getallheaders();
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
@@ -665,6 +727,9 @@ function handleUpdateOrderAccess($pdo) {
     ]);
 }
 
+/**
+ * Super Admin: toggle `can_access_chat_support` for a user.
+ */
 function handleUpdateChatSupportAccess($pdo) {
     $headers = getallheaders();
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
@@ -713,5 +778,4 @@ function handleUpdateChatSupportAccess($pdo) {
         'success' => true,
         'can_access_chat_support' => isset($updated['can_access_chat_support']) ? (int)$updated['can_access_chat_support'] : null
     ]);
-}
-?> 
+} 

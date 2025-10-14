@@ -4,7 +4,7 @@
 
 The chat support system now has **fully functional scroll bars** that appear when messages overflow the container. Users can now easily navigate through long conversations.
 
-## 🔧 **IMPLEMENTED SOLUTIONS**
+## **IMPLEMENTED SOLUTIONS**
 
 ### **1. Enhanced ChatSupport.jsx**
 - ✅ **Fixed container structure** with proper flex properties

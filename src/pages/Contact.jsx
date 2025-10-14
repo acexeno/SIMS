@@ -116,7 +116,7 @@ const Contact = ({ setCurrentPage }) => {
                   </div>
                   <div>
                     <h4 className="font-semibold text-gray-900">Address</h4>
-                    <p className="text-gray-600">Manila, Philippines</p>
+                    <p className="text-gray-600">Ground flr JSP Bldg. 9109 National rd. Cay Pombo, Santa Maria, Philippines</p>
                     <p className="text-gray-600">SIMS Development Center</p>
                   </div>
                 </div>

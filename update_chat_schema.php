@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/backend/config/database.php';
 
-echo "🔧 Updating Chat Database Schema\n";
+echo "Updating Chat Database Schema\n";
 echo "================================\n\n";
 
 try {
@@ -10,11 +10,11 @@ try {
     // Check if tables exist
     $stmt = $pdo->query("SHOW TABLES LIKE 'chat_sessions'");
     if ($stmt->rowCount() === 0) {
-        echo "❌ Chat tables don't exist. Please run the chat_schema.sql first.\n";
+        echo "Chat tables don't exist. Please run the chat_schema.sql first.\n";
         exit(1);
     }
     
-    echo "✅ Chat tables found. Updating schema...\n\n";
+    echo "Chat tables found. Updating schema...\n\n";
     
     // Add missing columns to chat_sessions
     echo "1. Updating chat_sessions table...\n";
@@ -25,7 +25,7 @@ try {
         $pdo->exec('ALTER TABLE chat_sessions ADD COLUMN priority ENUM("low", "normal", "high", "urgent") DEFAULT "normal" AFTER status');
         echo "   ✓ Added priority column\n";
     } else {
-        echo "   ℹ️ Priority column already exists\n";
+        echo "   Priority column already exists\n";
     }
     
     // Check if resolution_notes column exists
@@ -34,7 +34,7 @@ try {
         $pdo->exec('ALTER TABLE chat_sessions ADD COLUMN resolution_notes TEXT DEFAULT NULL AFTER priority');
         echo "   ✓ Added resolution_notes column\n";
     } else {
-        echo "   ℹ️ Resolution notes column already exists\n";
+        echo "   Resolution notes column already exists\n";
     }
     
     // Add missing columns to chat_messages
@@ -46,7 +46,7 @@ try {
         $pdo->exec('ALTER TABLE chat_messages ADD COLUMN message_type ENUM("text", "image", "file", "system") DEFAULT "text" AFTER message');
         echo "   ✓ Added message_type column\n";
     } else {
-        echo "   ℹ️ Message type column already exists\n";
+        echo "   Message type column already exists\n";
     }
     
     // Check if read_status column exists
@@ -55,7 +55,7 @@ try {
         $pdo->exec('ALTER TABLE chat_messages ADD COLUMN read_status ENUM("unread", "read") DEFAULT "unread" AFTER message_type');
         echo "   ✓ Added read_status column\n";
     } else {
-        echo "   ℹ️ Read status column already exists\n";
+        echo "   Read status column already exists\n";
     }
     
     // Add indexes
@@ -66,9 +66,9 @@ try {
         echo "   ✓ Added status index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Status index error: " . $e->getMessage() . "\n";
+            echo "   Status index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Status index already exists\n";
+            echo "   Status index already exists\n";
         }
     }
     
@@ -77,9 +77,9 @@ try {
         echo "   ✓ Added priority index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Priority index error: " . $e->getMessage() . "\n";
+            echo "   Priority index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Priority index already exists\n";
+            echo "   Priority index already exists\n";
         }
     }
     
@@ -88,9 +88,9 @@ try {
         echo "   ✓ Added updated_at index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Updated_at index error: " . $e->getMessage() . "\n";
+            echo "   Updated_at index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Updated_at index already exists\n";
+            echo "   Updated_at index already exists\n";
         }
     }
     
@@ -99,9 +99,9 @@ try {
         echo "   ✓ Added session_sender index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Session_sender index error: " . $e->getMessage() . "\n";
+            echo "   Session_sender index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Session_sender index already exists\n";
+            echo "   Session_sender index already exists\n";
         }
     }
     
@@ -110,9 +110,9 @@ try {
         echo "   ✓ Added read_status index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Read_status index error: " . $e->getMessage() . "\n";
+            echo "   Read_status index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Read_status index already exists\n";
+            echo "   Read_status index already exists\n";
         }
     }
     
@@ -121,14 +121,14 @@ try {
         echo "   ✓ Added sent_at index\n";
     } catch (PDOException $e) {
         if (strpos($e->getMessage(), 'Duplicate key name') === false) {
-            echo "   ⚠ Sent_at index error: " . $e->getMessage() . "\n";
+            echo "   Sent_at index error: " . $e->getMessage() . "\n";
         } else {
-            echo "   ℹ️ Sent_at index already exists\n";
+            echo "   Sent_at index already exists\n";
         }
     }
     
-    echo "\n✅ Chat database schema updated successfully!\n";
-    echo "\n🎉 Your chat support system is now ready!\n";
+    echo "\nChat database schema updated successfully!\n";
+    echo "\nYour chat support system is now ready!\n";
     echo "\nFeatures available:\n";
     echo "• Real-time messaging between users and support staff\n";
     echo "• Priority levels (low, normal, high, urgent)\n";
@@ -139,6 +139,6 @@ try {
     echo "• Auto-replies and notifications\n";
     
 } catch (Exception $e) {
-    echo "❌ Error: " . $e->getMessage() . "\n";
+    echo "Error: " . $e->getMessage() . "\n";
 }
 ?> 

@@ -1,5 +1,10 @@
 <?php
+/**
+ * Prebuilts API: list, create, update, delete, and seed prebuilts from inventory.
+ * Admin/Super Admin restricted for mutations; supports diagnostic modes in APP_DEBUG.
+ */
 require_once __DIR__ . '/../config/cors.php';
+require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
 header('Content-Type: application/json');
@@ -90,6 +95,9 @@ if (($__app_debug === '1' || strtolower($__app_debug) === 'true') && isset($_GET
     }
 }
 
+/**
+ * Decode Authorization header, verify JWT, and attach roles from DB.
+ */
 function get_authenticated_user($pdo) {
     $headers = function_exists('getallheaders') ? getallheaders() : (function_exists('build_request_headers') ? build_request_headers() : []);
     // Normalize lowercase key variant if present
@@ -107,6 +115,9 @@ function get_authenticated_user($pdo) {
     return $user;
 }
 
+/**
+ * Return true for users with Admin or Super Admin role.
+ */
 function is_admin_or_superadmin($user) {
     $roles = $user['roles'] ?? [];
     if (is_string($roles)) {
@@ -115,6 +126,10 @@ function is_admin_or_superadmin($user) {
     return $user && (in_array('Super Admin', $roles) || in_array('Admin', $roles));
 }
 
+/**
+ * Generate prebuilts using simple heuristics against current components inventory.
+ * Requires Admin/Super Admin. Optionally clears table with ?reset=1 before seeding.
+ */
 function seed_prebuilts($pdo, $user) {
     // Admin/Super Admin only
     if (!is_admin_or_superadmin($user)) {
@@ -128,7 +143,7 @@ function seed_prebuilts($pdo, $user) {
         $pdo->exec('DELETE FROM prebuilts');
     }
 
-    // Helpers to fetch components by category name
+    // Helpers: fetch category, price normalization, and attribute normalization
     $fetchByCat = function($catName) use ($pdo) {
         $stmt = $pdo->prepare("SELECT c.* FROM components c JOIN component_categories cat ON c.category_id = cat.id WHERE UPPER(cat.name) = UPPER(?) AND (c.is_active IS NULL OR c.is_active = 1)");
         $stmt->execute([$catName]);
@@ -145,14 +160,14 @@ function seed_prebuilts($pdo, $user) {
     $cases = $fetchByCat('Case');
     $coolers = $fetchByCat('Cooler');
 
-    // Utility: safely parse numeric price
+    // Utility: parse numeric price defensively
     $getPrice = function($row) {
         if (!isset($row['price'])) return 0;
         $n = floatval($row['price']);
         return $n > 0 ? $n : 0;
     };
 
-    // Normalize socket/brand
+    // Normalize socket/brand to align CPU↔Motherboard matching
     $normSocket = function($s) {
         if (!$s) return '';
         $s = strtolower($s);
@@ -176,7 +191,7 @@ function seed_prebuilts($pdo, $user) {
     }
     unset($mb);
 
-    // Pickers with simple heuristics
+    // Pickers: cheapest-by-tier with minimal constraints
     $pickCheapest = function($arr) use ($getPrice) {
         usort($arr, function($a, $b) use ($getPrice) { return $getPrice($a) <=> $getPrice($b); });
         return $arr[0] ?? null;
@@ -248,7 +263,7 @@ function seed_prebuilts($pdo, $user) {
         return $coolers[0];
     };
 
-    // Define target CPU buckets
+    // Assemble CPU buckets and sort by price
     $amdCpus = array_values(array_filter($cpus, function($c){ return ($c['brand_norm'] ?? '') === 'AMD' || stripos($c['name'] ?? '', 'ryzen') !== false; }));
     $intelCpus = array_values(array_filter($cpus, function($c){ return ($c['brand_norm'] ?? '') === 'Intel' || stripos($c['name'] ?? '', 'intel') !== false || stripos($c['name'] ?? '', 'core i') !== false; }));
 
@@ -293,7 +308,7 @@ function seed_prebuilts($pdo, $user) {
         ];
     };
 
-    // Construct tiers
+    // Construct labeled tiers and candidate builds
     $amdBudget = $amdCpus[0] ?? null;
     $amdMid = $amdCpus[min(1, max(0, count($amdCpus)-1))] ?? ($amdCpus[0] ?? null);
     $amdHigh = $amdCpus[min(2, max(0, count($amdCpus)-1))] ?? ($amdCpus[0] ?? null);
@@ -315,7 +330,7 @@ function seed_prebuilts($pdo, $user) {
         exit();
     }
 
-    // Insert prebuilts
+    // Insert prebuilts and return created IDs
     $stmt = $pdo->prepare('INSERT INTO prebuilts (name, category, description, image, price, performance, features, component_ids, in_stock, is_hidden) VALUES (?, ?, ?, "", ?, ?, ?, ?, ?, ?)');
     $createdIds = [];
     foreach ($candidates as $p) {
@@ -337,6 +352,9 @@ function seed_prebuilts($pdo, $user) {
     exit();
 }
 
+/**
+ * Guard: require Admin or Super Admin for mutating routes.
+ */
 function require_admin_or_superadmin($user) {
     $roles = $user['roles'] ?? [];
     if (is_string($roles)) {
@@ -361,7 +379,7 @@ switch ($method) {
             $stmt = $pdo->query($sql);
             $prebuilts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // Best-effort decode/sanitize JSON-like columns and ensure UTF-8 output
+            // Decode JSON-like columns; ensure UTF-8 output for UI stability
             foreach ($prebuilts as &$row) {
                 foreach (['performance', 'features', 'component_ids'] as $jsonField) {
                     if (isset($row[$jsonField])) {
@@ -395,7 +413,7 @@ switch ($method) {
         break;
     case 'POST':
         $user = get_authenticated_user($pdo);
-        // Seeding endpoint: POST ?seed=1
+        // Seeding endpoint: POST ?seed=1 (supports env token bypass when enabled)
         if (isset($_GET['seed'])) {
             // If ENV toggle and token match, allow seeding without JWT (admin-only toggle)
             $enabled = ($seedEnabled === '1' || strtolower($seedEnabled) === 'true');
@@ -411,6 +429,20 @@ switch ($method) {
         }
         require_admin_or_superadmin($user);
         $data = json_decode(file_get_contents('php://input'), true);
+        // Server-side validation: require full component set (7 required categories)
+        $componentIds = isset($data['component_ids']) && is_array($data['component_ids']) ? $data['component_ids'] : [];
+        $lowerKeys = [];
+        foreach ($componentIds as $k => $v) { $lowerKeys[strtolower($k)] = $v; }
+        $required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
+        $missing = [];
+        foreach ($required as $req) {
+            if (!isset($lowerKeys[$req]) || empty($lowerKeys[$req])) { $missing[] = $req; }
+        }
+        if (!empty($missing)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Prebuilt must include all required components', 'missing' => $missing]);
+            break;
+        }
         $stmt = $pdo->prepare('INSERT INTO prebuilts (name, category, description, image, price, performance, features, component_ids, in_stock, is_hidden) VALUES (?, ?, ?, "", ?, ?, ?, ?, ?, ?)');
         $stmt->execute([
             $data['name'],
@@ -436,6 +468,22 @@ switch ($method) {
             exit();
         }
         $data = json_decode(file_get_contents('php://input'), true);
+        // If component_ids is being updated, enforce full required set for consistency
+        if (isset($data['component_ids'])) {
+            $componentIds = is_array($data['component_ids']) ? $data['component_ids'] : [];
+            $lowerKeys = [];
+            foreach ($componentIds as $k => $v) { $lowerKeys[strtolower($k)] = $v; }
+            $required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
+            $missing = [];
+            foreach ($required as $req) {
+                if (!isset($lowerKeys[$req]) || empty($lowerKeys[$req])) { $missing[] = $req; }
+            }
+            if (!empty($missing)) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'Prebuilt must include all required components', 'missing' => $missing]);
+                break;
+            }
+        }
         $fields = [];
         $values = [];
         foreach (['name','category','description','image','price','performance','features','component_ids','in_stock','is_hidden'] as $field) {

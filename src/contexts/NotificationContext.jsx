@@ -34,19 +34,41 @@ export const NotificationProvider = ({ children, user }) => {
     }
   }
 
+  // Helper function to check if user has access to notifications
+  const hasNotificationAccess = (user) => {
+    if (!user || !user.roles) return false;
+    
+    // Handle both array and string roles
+    let roles = [];
+    if (Array.isArray(user.roles)) {
+      roles = user.roles;
+    } else if (typeof user.roles === 'string') {
+      roles = user.roles.split(',').map(role => role.trim());
+    } else {
+      roles = [user.roles];
+    }
+    
+    const hasAccess = roles.some(role => ['Admin', 'Super Admin', 'Employee'].includes(role));
+    
+    return hasAccess;
+  };
+
   // Load notifications when user changes
   useEffect(() => {
-    if (user && user.id) {
+    if (user && user.id && hasNotificationAccess(user)) {
       loadNotifications()
       loadUnreadCount()
-      // Poll unread count every 5 seconds
+      // Poll unread count every 10 seconds (reduced frequency to avoid auth issues)
       if (pollRef.current) {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
-      pollRef.current = setInterval(() => {
-        loadUnreadCount()
-      }, 5000)
+      // Add initial delay to let authentication stabilize
+      setTimeout(() => {
+        pollRef.current = setInterval(() => {
+          loadUnreadCount()
+        }, 10000)
+      }, 2000)
       return () => {
         if (pollRef.current) {
           clearInterval(pollRef.current)
@@ -54,6 +76,7 @@ export const NotificationProvider = ({ children, user }) => {
         }
       }
     } else {
+      // Clear notifications for users without access (like Client users)
       setNotifications([])
       setUnreadCount(0)
       if (pollRef.current) {
@@ -63,13 +86,35 @@ export const NotificationProvider = ({ children, user }) => {
     }
   }, [user])
 
+  // Listen for authentication events
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      // Authentication required, stopping polling
+      setNotifications([])
+      setUnreadCount(0)
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+
+    window.addEventListener('auth:login-required', handleAuthRequired)
+    window.addEventListener('auth:unauthorized', handleAuthRequired)
+
+    return () => {
+      window.removeEventListener('auth:login-required', handleAuthRequired)
+      window.removeEventListener('auth:unauthorized', handleAuthRequired)
+    }
+  }, [])
+
   const loadNotifications = async () => {
-    if (!user || !user.id) return
+    if (!user || !user.id || !hasNotificationAccess(user)) return
     
     setLoading(true)
     try {
       const token = await ensureValidToken(false)
       if (!token) {
+        // No valid token available, stopping polling
         setNotifications([])
         setUnreadCount(0)
         // Stop polling to avoid repeated errors
@@ -78,9 +123,13 @@ export const NotificationProvider = ({ children, user }) => {
         return
       }
 
-      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, { method: 'GET' })
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, { 
+        method: 'GET', 
+        suppressUnauthorizedEvent: true 
+      })
       
       if (response.status === 401) {
+        // 401 error in loadNotifications, stopping polling
         // Do not clear global token here. Just reset local state and stop.
         setNotifications([])
         setUnreadCount(0)
@@ -102,6 +151,8 @@ export const NotificationProvider = ({ children, user }) => {
           }))
           setNotifications(notificationsWithDates)
         }
+      } else {
+        console.warn('NotificationContext: Unexpected response status:', response.status)
       }
     } catch (error) {
       console.error('Error loading notifications:', error)
@@ -111,7 +162,9 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   const loadUnreadCount = async () => {
-    if (!user || !user.id) return
+    if (!user || !user.id || !hasNotificationAccess(user)) {
+      return;
+    }
     
     try {
       const token = await ensureValidToken(false)
@@ -121,9 +174,13 @@ export const NotificationProvider = ({ children, user }) => {
         return
       }
 
-      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&count=1`, { method: 'GET' })
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&count=1`, { 
+        method: 'GET', 
+        suppressUnauthorizedEvent: true 
+      })
       
       if (response.status === 401) {
+        // 401 error in loadUnreadCount, stopping polling
         // Do not clear global token here. Just reset local state and stop polling.
         setNotifications([])
         setUnreadCount(0)
@@ -139,6 +196,8 @@ export const NotificationProvider = ({ children, user }) => {
         if (data.success) {
           setUnreadCount(data.count)
         }
+      } else {
+        console.warn('NotificationContext: Unexpected response status:', response.status)
       }
     } catch (error) {
       console.error('Error loading unread count:', error)
@@ -146,7 +205,7 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   const markAsRead = async (notificationId) => {
-    if (!user || !user.id) return
+    if (!user || !user.id || !hasNotificationAccess(user)) return
     
     try {
       const token = await ensureValidToken(false)
@@ -155,7 +214,8 @@ export const NotificationProvider = ({ children, user }) => {
       const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notification_id: notificationId })
+        body: JSON.stringify({ notification_id: notificationId }),
+        suppressUnauthorizedEvent: true
       })
       
       if (response.status === 401) {
@@ -183,14 +243,15 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   const markAllAsRead = async () => {
-    if (!user || !user.id) return
+    if (!user || !user.id || !hasNotificationAccess(user)) return
     
     try {
       const token = await ensureValidToken(false)
       if (!token) return
 
       const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&action=mark-all-read`, {
-        method: 'PUT'
+        method: 'PUT',
+        suppressUnauthorizedEvent: true
       })
       
       if (response.status === 401) {
@@ -213,7 +274,7 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   const deleteNotification = async (notificationId) => {
-    if (!user || !user.id) return
+    if (!user || !user.id || !hasNotificationAccess(user)) return
     try {
       const token = await ensureValidToken(false)
       if (!token) return
@@ -221,7 +282,8 @@ export const NotificationProvider = ({ children, user }) => {
       const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notification_id: notificationId })
+        body: JSON.stringify({ notification_id: notificationId }),
+        suppressUnauthorizedEvent: true
       })
       
       if (response.status === 401) {
@@ -250,13 +312,14 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   const deleteAllNotifications = async () => {
-    if (!user || !user.id) return;
+    if (!user || !user.id || !hasNotificationAccess(user)) return;
     try {
       const token = await ensureValidToken(false)
       if (!token) return
       const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications&all=1`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        suppressUnauthorizedEvent: true
       })
       if (response.status === 401) {
         // Do not clear global token here.

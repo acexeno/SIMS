@@ -19,17 +19,50 @@ function handleGetDashboardData($pdo) {
         $token = getBearerToken();
         if (!$token) {
             http_response_code(401);
-            $resp = ['error' => 'Unauthorized'];
+            error_log("Dashboard endpoint: No token provided");
+            $resp = ['error' => 'Unauthorized', 'message' => 'No authentication token provided'];
             if (dashboard_is_debug_enabled()) { $resp['debug'] = 'missing_token'; }
             echo json_encode($resp);
             return;
         }
+        
+        error_log("Dashboard endpoint: Token provided, length: " . strlen($token));
         $decoded = verifyJWT($token);
-
         if (!$decoded || !isset($decoded['user_id'])) {
             http_response_code(401);
-            $resp = ['error' => 'Invalid token'];
-            if (dashboard_is_debug_enabled()) { $resp['debug'] = 'invalid_token'; }
+            error_log("Dashboard endpoint: Token verification failed");
+            $resp = ['error' => 'Invalid token', 'message' => 'Token is invalid or expired'];
+            if (dashboard_is_debug_enabled()) { 
+                $resp['debug'] = [
+                    'token_provided' => !empty($token),
+                    'token_length' => strlen($token),
+                    'decoded_result' => $decoded
+                ]; 
+            }
+            echo json_encode($resp);
+            return;
+        }
+        
+        error_log("Dashboard endpoint: Token verified for user ID " . $decoded['user_id']);
+        
+        // Additional validation: ensure user exists and is active
+        $userId = $decoded['user_id'];
+        $stmt = $pdo->prepare("SELECT id, is_active FROM users WHERE id = ?");
+        $stmt->execute([$userId]);
+        $user = $stmt->fetch();
+        
+        if (!$user) {
+            http_response_code(401);
+            $resp = ['error' => 'User not found', 'message' => 'User account does not exist'];
+            if (dashboard_is_debug_enabled()) { $resp['debug'] = ['user_id' => $userId]; }
+            echo json_encode($resp);
+            return;
+        }
+        
+        if (!$user['is_active']) {
+            http_response_code(401);
+            $resp = ['error' => 'Account deactivated', 'message' => 'User account is deactivated'];
+            if (dashboard_is_debug_enabled()) { $resp['debug'] = ['user_id' => $userId]; }
             echo json_encode($resp);
             return;
         }
@@ -44,20 +77,27 @@ function handleGetDashboardData($pdo) {
 
         // For all admin roles, grant full access
         if (in_array('Super Admin', $roles) || in_array('Admin', $roles) || in_array('Employee', $roles)) {
-            // Fetch all users with their roles as a comma-separated string
-            $stmt = $pdo->query("
-                SELECT u.*, GROUP_CONCAT(r.name) as roles
-                FROM users u
-                LEFT JOIN user_roles ur ON u.id = ur.user_id
-                LEFT JOIN roles r ON ur.role_id = r.id
-                GROUP BY u.id
-            ");
-            $data['users'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            // Safely fetch users with error handling
+            try {
+                $stmt = $pdo->query("
+                    SELECT u.*, GROUP_CONCAT(r.name) as roles
+                    FROM users u
+                    LEFT JOIN user_roles ur ON u.id = ur.user_id
+                    LEFT JOIN roles r ON ur.role_id = r.id
+                    GROUP BY u.id
+                ");
+                $data['users'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            } catch (Exception $e) {
+                $data['users'] = [];
+                error_log("Dashboard: Failed to fetch users: " . $e->getMessage());
+            }
             
+            // Safely fetch system stats
             try {
                 $data['system_stats'] = get_system_stats($pdo);
             } catch (Exception $e) {
-                throw $e;
+                $data['system_stats'] = ['total_users' => 0, 'total_orders' => 0, 'total_sales' => 0];
+                error_log("Dashboard: Failed to fetch system stats: " . $e->getMessage());
             }
             
             // Branch-aware inventory: when branch is provided, override stock to that branch
@@ -70,13 +110,47 @@ function handleGetDashboardData($pdo) {
                 $branchId = get_branch_id_by_code($pdo, $branchCode);
             }
 
-            if ($branchId) {
-                $data['inventory'] = fetch_components_with_branch_stock($pdo, $branchId);
-            } else {
-                $data['inventory'] = pdo_get_all($pdo, 'components');
+            // Safely fetch inventory
+            try {
+                if ($branchId) {
+                    $data['inventory'] = fetch_components_with_branch_stock($pdo, $branchId);
+                } else {
+                    $data['inventory'] = pdo_get_all($pdo, 'components');
+                }
+            } catch (Exception $e) {
+                $data['inventory'] = [];
+                error_log("Dashboard: Failed to fetch inventory: " . $e->getMessage());
             }
-            $data['orders'] = pdo_get_all($pdo, 'orders');
-            $data['reports'] = get_reports_data($pdo);
+
+            // Safely fetch orders
+            try {
+                $data['orders'] = pdo_get_all($pdo, 'orders');
+            } catch (Exception $e) {
+                $data['orders'] = [];
+                error_log("Dashboard: Failed to fetch orders: " . $e->getMessage());
+            }
+
+            // Safely fetch reports
+            try {
+                $data['reports'] = get_reports_data($pdo);
+            } catch (Exception $e) {
+                $data['reports'] = [
+                    'weekly_sales' => [],
+                    'monthly_sales' => [],
+                    'daily_sales' => [],
+                    'top_selling_products' => [],
+                    'revenue_per_category' => [],
+                    'revenue_per_brand' => [],
+                    'deadstock' => [],
+                    'deadstock_total_value' => 0,
+                    'stock_movement' => [],
+                    'order_status_breakdown' => [],
+                    'average_order_value' => ['avg_order_value' => 0],
+                    'total_sales' => 0,
+                    'total_orders' => 0
+                ];
+                error_log("Dashboard: Failed to fetch reports: " . $e->getMessage());
+            }
         } else {
             http_response_code(403);
             $resp = ['error' => 'Forbidden'];
@@ -97,21 +171,43 @@ function handleGetDashboardData($pdo) {
 
 // A generic function to get all records from a table
 function pdo_get_all($pdo, $table) {
-    if ($table === 'components') {
-        $stmt = $pdo->query("SELECT * FROM components WHERE is_active = 1");
-    } else {
-        $stmt = $pdo->query("SELECT * FROM $table");
+    try {
+        if ($table === 'components') {
+            $stmt = $pdo->query("SELECT * FROM components WHERE is_active = 1");
+        } else {
+            $stmt = $pdo->query("SELECT * FROM $table");
+        }
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        error_log("pdo_get_all: Failed to fetch from table '$table': " . $e->getMessage());
+        return [];
     }
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 // Function to get system-wide statistics
 function get_system_stats($pdo) {
     $stats = [];
-    $stats['total_users'] = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
-    $stats['total_orders'] = (int)$pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn();
-    $stats['total_sales'] = (float)$pdo->query("SELECT SUM(total_price) FROM orders WHERE status = 'Completed'")->fetchColumn();
-    // More stats can be added here
+    try {
+        $stats['total_users'] = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+    } catch (Exception $e) {
+        $stats['total_users'] = 0;
+        error_log("get_system_stats: Failed to count users: " . $e->getMessage());
+    }
+    
+    try {
+        $stats['total_orders'] = (int)$pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn();
+    } catch (Exception $e) {
+        $stats['total_orders'] = 0;
+        error_log("get_system_stats: Failed to count orders: " . $e->getMessage());
+    }
+    
+    try {
+        $stats['total_sales'] = (float)$pdo->query("SELECT SUM(total_price) FROM orders WHERE status = 'Completed'")->fetchColumn();
+    } catch (Exception $e) {
+        $stats['total_sales'] = 0;
+        error_log("get_system_stats: Failed to sum sales: " . $e->getMessage());
+    }
+    
     return $stats;
 }
 
@@ -120,9 +216,31 @@ function get_reports_data($pdo) {
     $reports = [];
     
     // Check if we have any orders
-    $hasOrders = (int)$pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn() > 0;
+    try {
+        $hasOrders = (int)$pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn() > 0;
+    } catch (Exception $e) {
+        $hasOrders = false;
+        error_log("get_reports_data: Failed to check orders: " . $e->getMessage());
+    }
     
-    
+    if (!$hasOrders) {
+        // Return empty reports if no orders table or no orders
+        return [
+            'weekly_sales' => [],
+            'monthly_sales' => [],
+            'daily_sales' => [],
+            'top_selling_products' => [],
+            'revenue_per_category' => [],
+            'revenue_per_brand' => [],
+            'deadstock' => [],
+            'deadstock_total_value' => 0,
+            'stock_movement' => [],
+            'order_status_breakdown' => [],
+            'average_order_value' => ['avg_order_value' => 0],
+            'total_sales' => 0,
+            'total_orders' => 0
+        ];
+    }
     
     // Weekly sales (last 12 weeks)
     $stmt = $pdo->query("SELECT 
@@ -173,97 +291,135 @@ function get_reports_data($pdo) {
     
     
 
-    // Top-selling products (by quantity and revenue)
-    $stmt = $pdo->query("SELECT c.id, c.name, SUM(oi.quantity) as total_quantity, SUM(oi.price * oi.quantity) as total_revenue
-        FROM order_items oi
-        JOIN components c ON oi.component_id = c.id
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.status = 'Completed'
-        GROUP BY c.id, c.name
-        ORDER BY total_quantity DESC
-        LIMIT 10");
-    $reports['top_selling_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Top-selling products (by quantity and revenue) - only if order_items table exists
+    try {
+        $stmt = $pdo->query("SELECT c.id, c.name, SUM(oi.quantity) as total_quantity, SUM(oi.price * oi.quantity) as total_revenue
+            FROM order_items oi
+            JOIN components c ON oi.component_id = c.id
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.status = 'Completed'
+            GROUP BY c.id, c.name
+            ORDER BY total_quantity DESC
+            LIMIT 10");
+        $reports['top_selling_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $reports['top_selling_products'] = [];
+        error_log("get_reports_data: Failed to fetch top selling products (order_items table may not exist): " . $e->getMessage());
+    }
     
     
 
-    // Revenue per category
-    $stmt = $pdo->query("SELECT cat.name as category, SUM(oi.price * oi.quantity) as total_revenue
-        FROM order_items oi
-        JOIN components c ON oi.component_id = c.id
-        JOIN component_categories cat ON c.category_id = cat.id
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.status = 'Completed'
-        GROUP BY cat.id, cat.name
-        ORDER BY total_revenue DESC");
-    $reports['revenue_per_category'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Revenue per category - only if order_items table exists
+    try {
+        $stmt = $pdo->query("SELECT cat.name as category, SUM(oi.price * oi.quantity) as total_revenue
+            FROM order_items oi
+            JOIN components c ON oi.component_id = c.id
+            JOIN component_categories cat ON c.category_id = cat.id
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.status = 'Completed'
+            GROUP BY cat.id, cat.name
+            ORDER BY total_revenue DESC");
+        $reports['revenue_per_category'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $reports['revenue_per_category'] = [];
+        error_log("get_reports_data: Failed to fetch revenue per category (order_items table may not exist): " . $e->getMessage());
+    }
     
     
 
-    // Revenue per brand
-    $stmt = $pdo->query("SELECT c.brand, SUM(oi.price * oi.quantity) as total_revenue
-        FROM order_items oi
-        JOIN components c ON oi.component_id = c.id
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.status = 'Completed' AND c.brand IS NOT NULL AND c.brand != ''
-        GROUP BY c.brand
-        ORDER BY total_revenue DESC");
-    $reports['revenue_per_brand'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Revenue per brand - only if order_items table exists
+    try {
+        $stmt = $pdo->query("SELECT c.brand, SUM(oi.price * oi.quantity) as total_revenue
+            FROM order_items oi
+            JOIN components c ON oi.component_id = c.id
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.status = 'Completed' AND c.brand IS NOT NULL AND c.brand != ''
+            GROUP BY c.brand
+            ORDER BY total_revenue DESC");
+        $reports['revenue_per_brand'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $reports['revenue_per_brand'] = [];
+        error_log("get_reports_data: Failed to fetch revenue per brand (order_items table may not exist): " . $e->getMessage());
+    }
     
     
 
-    // Deadstock detection (stock > 0, no sales in last X days)
-    $period = isset($_GET['period']) && is_numeric($_GET['period']) ? intval($_GET['period']) : 90;
-    if ($period < 1) $period = 90;
-    $stmt = $pdo->query("SELECT 
-        c.id, 
-        c.name, 
-        c.stock_quantity, 
-        c.price, 
-        (c.price * c.stock_quantity) as total_value,
-        MAX(o.order_date) as last_sold_date
-        FROM components c
-        LEFT JOIN order_items oi ON c.id = oi.component_id
-        LEFT JOIN orders o ON oi.order_id = o.id AND o.status = 'Completed'
-        WHERE c.stock_quantity > 0
-        GROUP BY c.id, c.name, c.stock_quantity, c.price
-        HAVING (MAX(o.order_date) IS NULL OR MAX(o.order_date) < DATE_SUB(CURDATE(), INTERVAL $period DAY))");
-    
-    $deadstockItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $totalDeadstockValue = array_sum(array_column($deadstockItems, 'total_value'));
-    
-    $reports['deadstock'] = $deadstockItems;
-    $reports['deadstock_total_value'] = $totalDeadstockValue;
+    // Deadstock detection (stock > 0, no sales in last X days) - only if order_items table exists
+    try {
+        $period = isset($_GET['period']) && is_numeric($_GET['period']) ? intval($_GET['period']) : 90;
+        if ($period < 1) $period = 90;
+        $stmt = $pdo->query("SELECT 
+            c.id, 
+            c.name, 
+            c.stock_quantity, 
+            c.price, 
+            (c.price * c.stock_quantity) as total_value,
+            MAX(o.order_date) as last_sold_date
+            FROM components c
+            LEFT JOIN order_items oi ON c.id = oi.component_id
+            LEFT JOIN orders o ON oi.order_id = o.id AND o.status = 'Completed'
+            WHERE c.stock_quantity > 0
+            GROUP BY c.id, c.name, c.stock_quantity, c.price
+            HAVING (MAX(o.order_date) IS NULL OR MAX(o.order_date) < DATE_SUB(CURDATE(), INTERVAL $period DAY))");
+        
+        $deadstockItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $totalDeadstockValue = array_sum(array_column($deadstockItems, 'total_value'));
+        
+        $reports['deadstock'] = $deadstockItems;
+        $reports['deadstock_total_value'] = $totalDeadstockValue;
+    } catch (Exception $e) {
+        $reports['deadstock'] = [];
+        $reports['deadstock_total_value'] = 0;
+        error_log("get_reports_data: Failed to fetch deadstock (order_items table may not exist): " . $e->getMessage());
+    }
     
     
 
-    // Stock movement (sales out per product, last 30 days)
-    $stmt = $pdo->query("SELECT c.id, c.name, SUM(oi.quantity) as sold_last_30_days
-        FROM order_items oi
-        JOIN components c ON oi.component_id = c.id
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.status = 'Completed' AND o.order_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        GROUP BY c.id, c.name
-        ORDER BY sold_last_30_days DESC");
-    $reports['stock_movement'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Stock movement (sales out per product, last 30 days) - only if order_items table exists
+    try {
+        $stmt = $pdo->query("SELECT c.id, c.name, SUM(oi.quantity) as sold_last_30_days
+            FROM order_items oi
+            JOIN components c ON oi.component_id = c.id
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.status = 'Completed' AND o.order_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            GROUP BY c.id, c.name
+            ORDER BY sold_last_30_days DESC");
+        $reports['stock_movement'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $reports['stock_movement'] = [];
+        error_log("get_reports_data: Failed to fetch stock movement (order_items table may not exist): " . $e->getMessage());
+    }
     
     
 
     // Order status breakdown
-    $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM orders GROUP BY status");
-    $reports['order_status_breakdown'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    
+    try {
+        $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM orders GROUP BY status");
+        $reports['order_status_breakdown'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $reports['order_status_breakdown'] = [];
+        error_log("get_reports_data: Failed to fetch order status breakdown: " . $e->getMessage());
+    }
 
     // Average order value (completed orders)
-    $stmt = $pdo->query("SELECT AVG(total_price) as avg_order_value FROM orders WHERE status = 'Completed'");
-    $avgOrderValue = $stmt->fetch(PDO::FETCH_ASSOC);
-    $reports['average_order_value'] = $avgOrderValue;
-    
-    
-    
+    try {
+        $stmt = $pdo->query("SELECT AVG(total_price) as avg_order_value FROM orders WHERE status = 'Completed'");
+        $avgOrderValue = $stmt->fetch(PDO::FETCH_ASSOC);
+        $reports['average_order_value'] = $avgOrderValue;
+    } catch (Exception $e) {
+        $reports['average_order_value'] = ['avg_order_value' => 0];
+        error_log("get_reports_data: Failed to fetch average order value: " . $e->getMessage());
+    }
+
     // Add total sales and total orders for the dashboard
-    $reports['total_sales'] = array_sum(array_column($reports['monthly_sales'], 'total_sales'));
-    $reports['total_orders'] = array_sum(array_column($reports['order_status_breakdown'], 'count'));
+    try {
+        $reports['total_sales'] = array_sum(array_column($reports['monthly_sales'], 'total_sales'));
+        $reports['total_orders'] = array_sum(array_column($reports['order_status_breakdown'], 'count'));
+    } catch (Exception $e) {
+        $reports['total_sales'] = 0;
+        $reports['total_orders'] = 0;
+        error_log("get_reports_data: Failed to calculate totals: " . $e->getMessage());
+    }
     
     
 

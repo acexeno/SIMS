@@ -1,13 +1,25 @@
 <?php
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+/**
+ * Chat support API: sessions, messages, permissions, and stats.
+ * Requires valid JWT for staff actions; guests can initiate sessions with minimal fields.
+ * Notes: focuses on clarity, auditability, and safe defaults when checks fail.
+ */
+// Error reporting controlled by environment
+require_once __DIR__ . '/../config/env.php';
+$appDebug = env('APP_DEBUG', '0');
+if ($appDebug === '1' || strtolower($appDebug) === 'true') {
+    error_reporting(E_ALL);
+    ini_set('display_errors', 1);
+} else {
+    error_reporting(E_ALL & ~E_NOTICE & ~E_STRICT & ~E_DEPRECATED);
+    ini_set('display_errors', 0);
+}
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/cors.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
 
-// Log function for debugging
+// Development log helper: rotate externally if needed for production
 function logMessage($message) {
     $logFile = __DIR__ . '/chat_debug.log';
     $timestamp = date('Y-m-d H:i:s');
@@ -31,7 +43,9 @@ function respond($data, $code = 200) {
     exit;
 }
 
-// Get user from token if provided
+/**
+ * Decode Bearer token (or ?token=) and return payload, or null if absent/invalid.
+ */
 function getUserFromToken() {
     $headers = getallheaders();
     $token = null;
@@ -54,7 +68,10 @@ function getUserFromToken() {
     return null;
 }
 
-// Check if user has permission for chat support
+/**
+ * Check if user has permission to access chat features.
+ * Respects Super Admin override and per-user `can_access_chat_support` flags.
+ */
 function hasChatPermission($user, $requiredLevel = 'read') {
     if (!$user || !isset($user['roles'])) {
         return false;
@@ -83,7 +100,7 @@ function hasChatPermission($user, $requiredLevel = 'read') {
         return false;
     }
 
-    // Role-based defaults
+    // Role-based defaults with safe fallbacks
     if (in_array('Admin', $roles, true)) {
         return true; // Admins allowed unless explicitly disabled above
     }
@@ -96,6 +113,9 @@ function hasChatPermission($user, $requiredLevel = 'read') {
     return false;
 }
 
+/**
+ * Return unread count for user's open sessions since their last seen time.
+ */
 function getUnreadCount($userId) {
     global $pdo;
     $stmt = $pdo->prepare('SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND status = "open" AND updated_at > (SELECT COALESCE(MAX(last_seen_at), "1970-01-01") FROM last_seen_chat WHERE user_id = ?)');
@@ -105,7 +125,7 @@ function getUnreadCount($userId) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-// Get chat statistics (admin)
+// Stats dashboard: totals, open sessions, today, and average first admin response
 if ($method === 'GET' && isset($_GET['stats'])) {
     try {
         $stats = [];
@@ -141,7 +161,7 @@ if ($method === 'GET' && isset($_GET['stats'])) {
     }
 }
 
-// List all chat sessions (admin/employee only) with enhanced data
+// List sessions (admin/employee): includes unread counts and last message time
 if ($method === 'GET' && isset($_GET['sessions'])) {
     try {
         $user = getUserFromToken();
@@ -191,7 +211,7 @@ if ($method === 'GET' && isset($_GET['sessions'])) {
     }
 }
 
-// Get messages for a session with read status
+// Fetch messages for a session; marks read and updates last_seen for authenticated users
 if ($method === 'GET' && isset($_GET['messages']) && isset($_GET['session_id'])) {
     try {
         $session_id = intval($_GET['session_id']);
@@ -239,7 +259,7 @@ if ($method === 'GET' && isset($_GET['messages']) && isset($_GET['session_id']))
         $stmt->execute([$session_id]);
         $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Mark messages as read if user is viewing them
+        // Mark messages as read for authenticated user viewers
         if ($user_id) {
             $stmt = $pdo->prepare('
                 UPDATE chat_messages 
@@ -257,7 +277,7 @@ if ($method === 'GET' && isset($_GET['messages']) && isset($_GET['session_id']))
             $stmt->execute([$user_id, $session_id]);
         }
         
-        // Also update session timestamp
+        // Keep session fresh for ordering
         $pdo->prepare('UPDATE chat_sessions SET updated_at = NOW() WHERE id = ?')
             ->execute([$session_id]);
         
@@ -268,7 +288,7 @@ if ($method === 'GET' && isset($_GET['messages']) && isset($_GET['session_id']))
     }
 }
 
-// Get user's chat sessions
+// List sessions for a specific user (client-facing view)
 if ($method === 'GET' && isset($_GET['user_sessions'])) {
     try {
         $user_id = intval($_GET['user_id']);
@@ -289,10 +309,25 @@ if ($method === 'GET' && isset($_GET['user_sessions'])) {
     }
 }
 
-// Send a message (enhanced with better validation and features)
+// Send a message: creates session on first message, notifies staff, validates sender/type
 if ($method === 'POST' && isset($_GET['send'])) {
     try {
-        $input = json_decode(file_get_contents('php://input'), true);
+        // Robust body parsing (JSON or form-encoded)
+        $raw = file_get_contents('php://input');
+        $input = [];
+        if (is_string($raw) && $raw !== '') {
+            $json = json_decode($raw, true);
+            if (is_array($json)) {
+                $input = $json;
+            } else {
+                $tmp = [];
+                parse_str($raw, $tmp);
+                if (is_array($tmp) && !empty($tmp)) $input = $tmp;
+            }
+        }
+        if (empty($input) && !empty($_POST)) {
+            $input = $_POST;
+        }
         $session_id = isset($input['session_id']) ? intval($input['session_id']) : 0;
         $sender = $input['sender'] ?? '';
         $message = trim($input['message'] ?? '');
@@ -305,7 +340,7 @@ if ($method === 'POST' && isset($_GET['send'])) {
             respond(['error' => 'Invalid input: sender and message required'], 400);
         }
 
-        // Validate sender type and check permissions
+        // Validate sender type and check permissions for admin messages
         $currentUser = getUserFromToken();
         if ($sender === 'admin') {
             if (!hasChatPermission($currentUser, 'write')) {
@@ -318,7 +353,7 @@ if ($method === 'POST' && isset($_GET['send'])) {
             $message_type = 'text';
         }
 
-        // If no session_id, create a new session
+        // If new conversation, create session and send auto-reply
         if (!$session_id) {
             $stmt = $pdo->prepare('
                 INSERT INTO chat_sessions (user_id, guest_name, guest_email, status, priority) 
@@ -339,7 +374,7 @@ if ($method === 'POST' && isset($_GET['send'])) {
             $autoReply = 'Thank you for contacting SIMS Support! 🖥️ Our team will respond within 5-10 minutes. In the meantime, feel free to browse our PC components or check out our prebuilt systems.';
             $stmt->execute([$session_id, 'admin', $autoReply, 'text', 'unread']);
             
-            // Notify all Admin and Employee users
+            // Notify active Admin and Employee users of new session
             $userStmt = $pdo->query("
                 SELECT DISTINCT u.id FROM users u 
                 JOIN user_roles ur ON u.id = ur.user_id 
@@ -362,7 +397,7 @@ if ($method === 'POST' && isset($_GET['send'])) {
             respond(['success' => true, 'session_id' => $session_id, 'message' => 'Chat session created successfully']);
         }
 
-                // Verify the session exists and is accessible before inserting message
+        // Verify the session exists and is accessible before inserting message
         $checkSession = $pdo->prepare('SELECT id FROM chat_sessions WHERE id = ?');
         $checkSession->execute([$session_id]);
         
@@ -378,14 +413,14 @@ if ($method === 'POST' && isset($_GET['send'])) {
         $read_status = 'unread';
         $stmt->execute([$session_id, $sender, $message, $message_type, $read_status]);
         
-        // Update the session's updated_at timestamp
+        // Update session freshness timestamp
         $pdo->prepare('UPDATE chat_sessions SET updated_at = NOW() WHERE id = ?')
             ->execute([$session_id]);
         
         // Update session timestamp
         $pdo->prepare('UPDATE chat_sessions SET updated_at = NOW() WHERE id = ?')->execute([$session_id]);
         
-        // Handle notifications based on sender
+        // Notify recipients based on sender role
         if ($sender === 'admin') {
             // Notify user if they have an account
             $stmt = $pdo->prepare('SELECT user_id FROM chat_sessions WHERE id = ?');
@@ -428,7 +463,7 @@ if ($method === 'POST' && isset($_GET['send'])) {
     }
 }
 
-// Mark a chat as resolved
+// Resolve a chat session and add a system message
 if ($method === 'POST' && isset($_GET['resolve'])) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
@@ -460,7 +495,7 @@ if ($method === 'POST' && isset($_GET['resolve'])) {
     }
 }
 
-// Reopen a chat session
+// Reopen a chat session and add a system message
 if ($method === 'POST' && isset($_GET['reopen'])) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
@@ -531,7 +566,7 @@ if ($method === 'POST' && isset($_GET['delete_session'])) {
     }
 }
 
-// Update chat priority
+// Update chat priority with validation
 if ($method === 'POST' && isset($_GET['update_priority'])) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
@@ -556,7 +591,7 @@ if ($method === 'POST' && isset($_GET['update_priority'])) {
     }
 }
 
-// Get unread count for user
+// Get unread count for user (client-facing)
 if ($method === 'GET' && isset($_GET['unread_count'])) {
     try {
         $user_id = intval($_GET['user_id'] ?? 0);
@@ -573,7 +608,7 @@ if ($method === 'GET' && isset($_GET['unread_count'])) {
     }
 }
 
-// Check user chat permissions
+// Check user chat permissions and echo capability flags
 if ($method === 'GET' && isset($_GET['check_permissions'])) {
     try {
         $user = getUserFromToken();
@@ -598,7 +633,7 @@ if ($method === 'GET' && isset($_GET['check_permissions'])) {
     }
 }
 
-// Update last seen timestamp for user
+// Update last seen timestamp for user and session
 if ($method === 'POST' && isset($_GET['update_last_seen'])) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
@@ -621,7 +656,7 @@ if ($method === 'POST' && isset($_GET['update_last_seen'])) {
     }
 }
 
-// Get online support agents count
+// Get online support agent count (recent last_login)
 if ($method === 'GET' && isset($_GET['support_agents'])) {
     try {
         // Count active admins and employees who can access chat
@@ -643,5 +678,5 @@ if ($method === 'GET' && isset($_GET['support_agents'])) {
     }
 }
 
-// If no endpoint matched
+// Fallback: 404 for unknown endpoint
 respond(['error' => 'Invalid endpoint'], 404); 

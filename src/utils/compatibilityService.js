@@ -15,7 +15,6 @@ const COMPATIBILITY_RULES = {
     'Intel LGA1700': ['Intel LGA1700'],
     'Intel LGA1851': ['Intel LGA1851'],
     'Intel LGA1151': ['Intel LGA1151'],
-    'Intel LGA1200': ['Intel LGA1200'],
     'Intel LGA2066': ['Intel LGA2066'],
     'Intel LGA2011-3': ['Intel LGA2011-3'],
     'Intel LGA3647': ['Intel LGA3647'],
@@ -38,7 +37,7 @@ const COMPATIBILITY_RULES = {
     },
     'DDR5': {
       'min': 4800,
-      'max': 8000,
+      'max': 6400, // More realistic max for most motherboards
       'recommended': [4800, 5200, 5600, 6000, 6400]
     }
   },
@@ -47,6 +46,7 @@ const COMPATIBILITY_RULES = {
   cpu_ram_compatibility: {
     'Intel LGA1200': ['DDR4'],
     'Intel LGA1700': ['DDR4', 'DDR5'],
+    'Intel LGA1851': ['DDR5'], // 14th gen Intel primarily uses DDR5
     'Intel LGA1151': ['DDR4'],
     'AMD AM4': ['DDR4'],
     'AMD AM5': ['DDR5']
@@ -55,8 +55,8 @@ const COMPATIBILITY_RULES = {
   // Form Factor Compatibility
   form_factors: {
     'ATX': ['ATX', 'Micro-ATX', 'Mini-ITX'],
-    'Micro-ATX': ['ATX', 'Micro-ATX'],
-    'Mini-ITX': ['ATX', 'Micro-ATX', 'Mini-ITX'],
+    'Micro-ATX': ['Micro-ATX', 'Mini-ITX'], // Micro-ATX cases can't fit ATX motherboards
+    'Mini-ITX': ['Mini-ITX'], // Mini-ITX cases can only fit Mini-ITX motherboards
     'E-ATX': ['E-ATX', 'ATX', 'Micro-ATX', 'Mini-ITX']
   },
 
@@ -183,18 +183,23 @@ const extractSocketFromName = (name) => {
     return 'Intel LGA1200';
   }
   
-  // Intel 12th/13th/14th gen (LGA1700)
-  if (lowerName.includes('i7-12700') || lowerName.includes('i7-13700') || lowerName.includes('i7-14700')) {
+  // Intel 12th/13th gen (LGA1700)
+  if (lowerName.includes('i7-12700') || lowerName.includes('i7-13700')) {
     return 'Intel LGA1700';
   }
-  if (lowerName.includes('i5-12600') || lowerName.includes('i5-13600') || lowerName.includes('i5-14600')) {
+  if (lowerName.includes('i5-12600') || lowerName.includes('i5-13600')) {
     return 'Intel LGA1700';
   }
-  if (lowerName.includes('i3-12100') || lowerName.includes('i3-13100') || lowerName.includes('i3-14100')) {
+  if (lowerName.includes('i3-12100') || lowerName.includes('i3-13100')) {
     return 'Intel LGA1700';
   }
-  if (lowerName.includes('i9-12900') || lowerName.includes('i9-13900') || lowerName.includes('i9-14900')) {
+  if (lowerName.includes('i9-12900') || lowerName.includes('i9-13900')) {
     return 'Intel LGA1700';
+  }
+  
+  // Intel 14th gen (LGA1851)
+  if (lowerName.includes('i7-14700') || lowerName.includes('i5-14600') || lowerName.includes('i3-14100') || lowerName.includes('i9-14900')) {
+    return 'Intel LGA1851';
   }
   
   // Intel 8th/9th gen (LGA1151)
@@ -217,6 +222,16 @@ const extractSocketFromName = (name) => {
   }
   if (lowerName.includes('ryzen 7 7700') || lowerName.includes('ryzen 9 7900')) {
     return 'AMD AM5';
+  }
+  
+  // AMD Ryzen 7000 series (AM5)
+  if (lowerName.includes('ryzen 5 7600') || lowerName.includes('ryzen 7 7800') || lowerName.includes('ryzen 9 7950')) {
+    return 'AMD AM5';
+  }
+  
+  // AMD Ryzen 5000 series (AM4)
+  if (lowerName.includes('ryzen 5 5600') || lowerName.includes('ryzen 7 5700') || lowerName.includes('ryzen 9 5950')) {
+    return 'AMD AM4';
   }
   
   // AMD Athlon series (AM4)
@@ -269,12 +284,16 @@ const normalizeSocket = (socket) => {
   // Tolerate AMDx typo (AMD4 -> AM4, AMD5 -> AM5)
   s = s.replace(/^AMD4$/, 'AM4').replace(/^AMD5$/, 'AM5').replace(/^AMD/, 'AM');
   // Map to canonical tokens
-  if (s.includes('AM4')) return 'AM4';
-  if (s.includes('AM5')) return 'AM5';
-  if (s.includes('LGA1200')) return 'LGA1200';
-  if (s.includes('LGA1700')) return 'LGA1700';
-  if (s.includes('LGA1151')) return 'LGA1151';
-  if (s.includes('LGA2066')) return 'LGA2066';
+  if (s.includes('AM4')) return 'AMD AM4';
+  if (s.includes('AM5')) return 'AMD AM5';
+  if (s.includes('LGA1200')) return 'Intel LGA1200';
+  if (s.includes('LGA1700')) return 'Intel LGA1700';
+  if (s.includes('LGA1851')) return 'Intel LGA1851';
+  if (s.includes('LGA1151')) return 'Intel LGA1151';
+  if (s.includes('LGA2066')) return 'Intel LGA2066';
+  if (s.includes('LGA2011')) return 'Intel LGA2011-3';
+  if (s.includes('LGA3647')) return 'Intel LGA3647';
+  if (s.includes('LGA4189')) return 'Intel LGA4189';
   return s;
 };
 
@@ -464,11 +483,12 @@ const checkCaseMotherboardCompatibility = (case_, motherboard) => {
   if (caseFormFactor && moboFormFactor) {
     const cf = normalizeFormFactor(caseFormFactor);
     const mf = normalizeFormFactor(moboFormFactor);
-    if (cf && mf && COMPATIBILITY_RULES.form_factors[mf]) {
-      const compatible = COMPATIBILITY_RULES.form_factors[mf].includes(cf);
+    if (cf && mf && COMPATIBILITY_RULES.form_factors[cf]) {
+      // Check if motherboard form factor is supported by case
+      const compatible = COMPATIBILITY_RULES.form_factors[cf].includes(mf);
       return {
         compatible,
-        reason: compatible ? 'Form factor compatible' : `Form factor mismatch: ${mf} motherboard in ${cf} case`,
+        reason: compatible ? 'Form factor compatible' : `Form factor mismatch: ${mf} motherboard cannot fit in ${cf} case`,
         details: { caseFormFactor: cf, moboFormFactor: mf }
       };
     }
@@ -856,7 +876,14 @@ export const getCompatibilityScore = (selectedComponents) => {
     if (check.compatible) passedChecks++;
   }
   
-  const score = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 100;
+  // If no components are selected, return 0 score
+  const hasAnyComponents = Object.values(selectedComponents).some(component => 
+    component !== null && component !== undefined && 
+    typeof component === 'object' && Object.keys(component).length > 0 &&
+    component.id && component.name
+  );
+  
+  const score = !hasAnyComponents ? 0 : (totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 100);
   
   return {
     score,

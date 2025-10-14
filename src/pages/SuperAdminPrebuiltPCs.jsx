@@ -119,11 +119,26 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
   const fetchPrebuilts = async () => {
     try {
       const token = await ensureValidToken(false);
-      if (!token) { setLoading(false); return; }
+      if (!token) { 
+        console.log('No valid token for fetchPrebuilts');
+        setLoading(false); 
+        return; 
+      }
+      console.log('Fetching prebuilts...');
       const response = await authorizedFetch(`${API_BASE}/prebuilts.php?all=1`);
+      
+      if (response.status === 401) {
+        console.log('Authentication failed for prebuilts');
+        setLoading(false);
+        return;
+      }
+      
       const data = await response.json();
       if (Array.isArray(data)) {
         setPrebuilts(data);
+        console.log('Prebuilts loaded successfully');
+      } else {
+        console.error('Invalid prebuilts data:', data);
       }
     } catch (error) {
       console.error('Error fetching prebuilts:', error);
@@ -232,10 +247,12 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // Validate component_ids
-    const hasAtLeastOneComponent = Object.values(formData.component_ids).some(id => id && id !== '');
-    if (!hasAtLeastOneComponent) {
-      alert('You must select at least one component for this prebuilt.');
+    // Validate component_ids: require full set of required components
+    const lowerKeys = Object.fromEntries(Object.entries(formData.component_ids || {}).map(([k,v]) => [String(k).toLowerCase(), v]));
+    const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
+    const missing = required.filter(k => !lowerKeys[k]);
+    if (missing.length > 0) {
+      alert('Please select all required components before saving this prebuilt. Missing: ' + missing.join(', '));
       return;
     }
     try {

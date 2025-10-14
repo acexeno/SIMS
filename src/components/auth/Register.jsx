@@ -1,6 +1,11 @@
+/**
+ * Register component: validates PII, enforces strong password, and OTP-gated registration.
+ * UX: Shows simple strength meter and OTP resend cooldown/expiry.
+ */
 import React, { useState } from 'react';
 import { validateNoEmoji } from '../../utils/validation';
 import { API_BASE } from '../../utils/apiBase';
+import PasswordInput from '../common/PasswordInput';
 
 const Register = ({ onRegister, onSwitchToLogin }) => {
   const [formData, setFormData] = useState({
@@ -20,6 +25,7 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
   const [cooldownSec, setCooldownSec] = useState(0);
   const [expiresAt, setExpiresAt] = useState(null);
 
+  // Input change handler: blocks emoji early to avoid invalid submission
   const handleChange = (e) => {
     const { name, value } = e.target;
     
@@ -34,6 +40,7 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
     setError('');
   };
 
+  // Submit handler: final validation and POST to backend register endpoint
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -53,6 +60,26 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
       }
     }
     
+    // Email format validation per test case
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email);
+    if (!emailOk) {
+      setError('Invalid email format');
+      return;
+    }
+
+    // Password strength requirement per test case
+    const strongPassword = (
+      (formData.password || '').length >= 8 &&
+      /[A-Z]/.test(formData.password) &&
+      /[a-z]/.test(formData.password) &&
+      /\d/.test(formData.password) &&
+      /[^A-Za-z0-9]/.test(formData.password)
+    );
+    if (!strongPassword) {
+      setError('Password must meet security requirements');
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -108,6 +135,7 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
     return { score, label: labels[Math.max(0, score - 1)] || 'Very weak' };
   }, [formData.password]);
 
+  // Request OTP for register purpose and initialize cooldown timers
   const handleSendOtp = async () => {
     setError('');
     setInfo('');
@@ -292,33 +320,27 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
               <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                 Password
               </label>
-              <input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
                 autoComplete="new-password"
                 required
                 className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"
                 placeholder="Enter your password"
                 value={formData.password}
                 onChange={handleChange}
+                showStrengthIndicator={true}
+                strengthScore={passwordStrength.score}
+                strengthLabel={passwordStrength.label}
               />
-              <div className="mt-1 h-2 w-full bg-gray-200 rounded">
-                <div
-                  className={`h-2 rounded ${passwordStrength.score >= 3 ? 'bg-green-600' : passwordStrength.score === 2 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                  style={{ width: `${Math.min(100, passwordStrength.score * 25)}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-600 mt-1">Strength: {passwordStrength.label}</p>
             </div>
             <div>
               <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
                 Confirm Password
               </label>
-              <input
+              <PasswordInput
                 id="confirmPassword"
                 name="confirmPassword"
-                type="password"
                 autoComplete="new-password"
                 required
                 className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"

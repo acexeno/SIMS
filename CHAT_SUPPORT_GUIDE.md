@@ -99,7 +99,7 @@ The admin interface includes real-time statistics:
 - **All Time**: Total chat sessions ever
 - **Average Response Time**: Staff response time in minutes
 
-## 🔧 Configuration & Customization
+## Configuration & Customization
 
 ### Auto-Reply Messages
 Edit the auto-reply message in `backend/api/chat.php`:
@@ -158,7 +158,7 @@ The system uses polling for real-time updates:
 - **Optimized queries** with proper joins
 - **Caching** of user sessions
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 1. **Chat not loading**: Check database connection

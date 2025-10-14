@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../utils/apiBase'
+import { authorizedFetch, ensureValidToken } from '../utils/auth'
+import PasswordInput from '../components/common/PasswordInput'
 import {
   BarChart3,
   Users,
@@ -75,11 +77,10 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     e.preventDefault();
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
       const endpoint = form.id ? 'update_component' : 'create_component';
-      const res = await fetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
       const result = await res.json();
@@ -337,10 +338,9 @@ const InventoryManagement = ({ inventory, categories, user }) => {
                       onClick={async () => {
                         if (!window.confirm(`Delete '${item.name}'?`)) return;
                         try {
-                          const token = localStorage.getItem('token');
-                          const res = await fetch(`${API_BASE}/index.php?endpoint=delete_component`, {
+                          const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=delete_component`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ id: item.id })
                           });
                           const result = await res.json();
@@ -651,7 +651,7 @@ const SuperAdminNotifications = () => {
   );
 };
 
-const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
+const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
   const [activeTab, setActiveTab] = useState(initialTab)
   const [users, setUsers] = useState([])
   const [systemStats, setSystemStats] = useState({})
@@ -740,11 +740,8 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     const fetchData = async (showLoading = false) => {
       if (showLoading) setIsLoading(true);
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=dashboard`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=dashboard`, {
+          method: 'GET'
         });
 
         if (!response.ok) {
@@ -785,7 +782,7 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const response = await fetch(`${API_BASE}/index.php?endpoint=categories`);
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=categories`);
         const result = await response.json();
         if (result.success) {
           setCategories(result.data);
@@ -797,6 +794,39 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     fetchCategories();
   }, []);
 
+  // Fetch user profile to ensure roles are properly set
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        // Wait for authentication to be ready before making API calls
+        const token = await ensureValidToken();
+        if (!token) {
+          // No valid token for profile fetch, skipping
+          return;
+        }
+        
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { 
+          method: 'GET',
+          suppressUnauthorizedEvent: true 
+        });
+        if (res.status === 401) {
+          // 401 error in profile fetch, skipping
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (data.success && data.user) {
+          if (setUser) setUser(data.user);
+        }
+      } catch (error) {
+        console.error('SuperAdminDashboard: Error fetching profile:', error);
+      }
+    };
+    
+    // Add a small delay to let authentication stabilize
+    const timeoutId = setTimeout(fetchProfile, 500);
+    return () => clearTimeout(timeoutId);
+  }, [setUser]);
+
   // ... rest of the code remains the same ...
 
   const createDefaultAdmin = async () => {
@@ -805,14 +835,11 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     }
 
     try {
-      const token = localStorage.getItem('token');
-      
       // First, create the user
-      const userResponse = await fetch(`${API_BASE}/auth/register.php`, {
+      const userResponse = await authorizedFetch(`${API_BASE}/auth/register.php`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           username: 'Admin',
@@ -832,11 +859,10 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
       }
 
       // Then, assign admin role
-      const roleResponse = await fetch(`${API_BASE}/index.php?endpoint=assign_role`, {
+      const roleResponse = await authorizedFetch(`${API_BASE}/index.php?endpoint=assign_role`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           user_id: userResult.user.id,
@@ -866,12 +892,10 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     // Handler for toggling inventory access
     const handleToggleInventoryAccess = async (userId, currentValue) => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=update_inventory_access`, {
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_inventory_access`, {
           method: 'PUT',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({ user_id: userId, can_access_inventory: currentValue ? 0 : 1 })
         });
@@ -889,12 +913,10 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     // In UserManagement, add the handler:
     const handleToggleOrderAccess = async (userId, currentValue) => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=update_order_access`, {
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_order_access`, {
           method: 'PUT',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({ user_id: userId, can_access_orders: currentValue ? 0 : 1 })
         });
@@ -912,12 +934,10 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     // In UserManagement, add handler for chat support access
     const handleToggleChatSupportAccess = async (userId, currentValue) => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=update_chat_support_access`, {
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_chat_support_access`, {
           method: 'PUT',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({ user_id: userId, can_access_chat_support: currentValue ? 0 : 1 })
         });
@@ -937,12 +957,10 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
     const handleCreateUser = async (e) => {
       e.preventDefault();
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/auth/register.php`, {
+        const response = await authorizedFetch(`${API_BASE}/auth/register.php`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             ...newUser,
@@ -1176,7 +1194,13 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user }) => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Password</label>
-                        <input required type="password" value={newUser.password} onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))} className="mt-1 block w-full border rounded px-3 py-2" />
+                        <PasswordInput
+                          required
+                          value={newUser.password}
+                          onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))}
+                          className="mt-1 block w-full border rounded px-3 py-2"
+                          placeholder="Enter password"
+                        />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Role</label>

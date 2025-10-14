@@ -60,7 +60,7 @@ function checkSecurityRequirements() {
     
     // Display results
     if (!empty($errors)) {
-        echo "❌ CRITICAL ERRORS (must fix before deployment):\n";
+        echo "CRITICAL ERRORS (must fix before deployment):\n";
         foreach ($errors as $error) {
             echo "   • $error\n";
         }
@@ -68,7 +68,7 @@ function checkSecurityRequirements() {
     }
     
     if (!empty($warnings)) {
-        echo "⚠️  WARNINGS (recommended to fix):\n";
+        echo "WARNINGS (recommended to fix):\n";
         foreach ($warnings as $warning) {
             echo "   • $warning\n";
         }
@@ -76,14 +76,14 @@ function checkSecurityRequirements() {
     }
     
     if (empty($errors) && empty($warnings)) {
-        echo "✅ All security checks passed!\n\n";
+        echo "All security checks passed!\n\n";
     }
     
     return empty($errors);
 }
 
 function generateSecureEnvFile() {
-    echo "🔧 Generating secure .env file...\n";
+    echo "Generating secure .env file...\n";
     
     $envContent = "# Production Environment Configuration\n";
     $envContent .= "APP_ENV=production\n";
@@ -139,12 +139,12 @@ function generateSecureEnvFile() {
     $envContent .= "CACHE_TTL=3600\n";
     
     file_put_contents(__DIR__ . '/.env.production', $envContent);
-    echo "✅ Generated .env.production file\n";
+    echo "Generated .env.production file\n";
     echo "   Please review and update the values before deployment\n\n";
 }
 
 function createSecureHtaccess() {
-    echo "🔧 Creating secure .htaccess file...\n";
+    echo "Creating secure .htaccess file...\n";
     
     $htaccessContent = '# Security-focused .htaccess for Hostinger
 # PC Building System
@@ -255,7 +255,7 @@ DirectoryIndex dist/index.html
 ';
     
     file_put_contents(__DIR__ . '/.htaccess.secure', $htaccessContent);
-    echo "✅ Created secure .htaccess file\n\n";
+    echo "Created secure .htaccess file\n\n";
 }
 
 function generateDeploymentChecklist() {
@@ -291,7 +291,7 @@ echo str_repeat("=", 50) . "\n\n";
 $securityOK = checkSecurityRequirements();
 
 if (!$securityOK) {
-    echo "❌ Security check failed. Please fix the errors above before deploying.\n";
+    echo "Security check failed. Please fix the errors above before deploying.\n";
     exit(1);
 }
 
@@ -300,7 +300,7 @@ generateSecureEnvFile();
 createSecureHtaccess();
 generateDeploymentChecklist();
 
-echo "🎉 Secure deployment preparation completed!\n";
+echo "Secure deployment preparation completed!\n";
 echo "\nNext steps:\n";
 echo "1. Review and update .env.production with your actual values\n";
 echo "2. Copy .env.production to .env on your server\n";

@@ -1,3 +1,8 @@
+/**
+ * EnhancedComponentSelector: fetches components per category, filters by compatibility,
+ * and presents formative guidance with smart previews and recommendations.
+ * Resilient to slow/failed requests via aborts, timeouts, and cached fallbacks.
+ */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Search, 
@@ -52,7 +57,7 @@ const EnhancedComponentSelector = ({
   const [filteredComponents, setFilteredComponents] = useState({ compatible: [], incompatible: [] });
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch coordination refs
+  // Fetch coordination and resilience: debounce, abort, timeout, cache
   const firstLoadRef = useRef(true);
   const lastCategoryRef = useRef(activeCategory);
   const requestSeqRef = useRef(0);
@@ -84,10 +89,10 @@ const EnhancedComponentSelector = ({
     'cooler': 'Cooler'
   };
 
-  // If parent already fetched the list for the current category, seed UI immediately
+  // Seed from parent-prefetched list when available (avoids spinner)
   useEffect(() => {
     if (Array.isArray(prefetchedComponents) && prefetchedComponents.length > 0) {
-      try { console.debug('[ECS] Using prefetched components:', { count: prefetchedComponents.length, category: activeCategory }); } catch {}
+      // Using prefetched components
       setComponents(prefetchedComponents);
       try { cacheRef.current[activeCategory] = prefetchedComponents; } catch {}
       const filtered = filterCompatibleComponents(prefetchedComponents, selectedComponents, activeCategory);
@@ -96,7 +101,7 @@ const EnhancedComponentSelector = ({
     }
   }, [prefetchedComponents, activeCategory, selectedComponents]);
 
-  // Fetch components from API
+  // Fetch components from API with timeout and abort handling
   const abortRef = useRef(null);
   const inflightCategoryRef = useRef(null);
   const timeoutRef = useRef(null);
@@ -110,11 +115,11 @@ const EnhancedComponentSelector = ({
   }, []);
 
   const fetchComponents = useCallback(async () => {
-    // Cancel any in-flight request before starting a new one
+    // Cancel previous request if category changed; reuse if same category
     const categoryChanged = lastCategoryRef.current !== activeCategory;
     // If we already have an in-flight request for the same category, don't abort it; just wait for it
     if (!categoryChanged && inflightCategoryRef.current === activeCategory && loading) {
-      try { console.debug('[ECS] Reuse in-flight request for', activeCategory); } catch {}
+      // Reuse in-flight request
       return;
     }
     // For category changes, abort previous request (if any)
@@ -141,8 +146,7 @@ const EnhancedComponentSelector = ({
       inflightCategoryRef.current = activeCategory;
       const dbCategory = categoryMapping[activeCategory];
       const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-      // Debug logging for difficult-to-reproduce loading states
-      try { console.debug('[ECS] Fetching components:', { activeCategory, dbCategory, branch, url }); } catch {}
+      // Start request with safety timeout to avoid hanging UI
       // Add a safety timeout so the UI never spins forever if the backend hangs
       timeoutRef.current = setTimeout(() => {
         timedOutRef.current = true;
@@ -150,23 +154,20 @@ const EnhancedComponentSelector = ({
       }, 10000); // 10s timeout
       const response = await fetch(url, { signal: controller.signal });
       if (timeoutRef.current) { try { clearTimeout(timeoutRef.current); } catch {} }
-      // If server returned non-JSON (e.g., PHP error), this can throw
+      // Lenient JSON parse: collect text for diagnostics when invalid
       const data = await response.json().catch(async (e) => {
         const text = await response.text().catch(() => '');
         throw new Error(`Invalid JSON from server. Status=${response.status} ${response.statusText}. BodyPreview=${(text || '').slice(0,200)}`);
       });
 
       if (!mountedRef.current) return;
-      // Ignore stale responses
+      // Ignore stale responses (keep latest only)
       if (seq !== requestSeqRef.current) {
-        try { console.debug('[ECS] Ignored stale response'); } catch {}
         return;
       }
 
       if (data.success) {
-        try { console.debug('[ECS] Loaded components:', { category: dbCategory, count: Array.isArray(data.data) ? data.data.length : 'n/a' }); } catch {}
-        
-        // Deduplicate components by id, then by name+brand combination
+        // Deduplicate components by id, then fallback to name+brand
         const deduplicatedComponents = [];
         const seenIds = new Set();
         const seenNames = new Set();
@@ -187,29 +188,28 @@ const EnhancedComponentSelector = ({
         }
         
         setComponents(deduplicatedComponents);
-        // Cache by category key
+        // Cache for quick re-renders and abort fallbacks
         try { cacheRef.current[activeCategory] = deduplicatedComponents; } catch {}
-        // Filter components based on compatibility
+        // Compute compatibility buckets for UI
         const filtered = filterCompatibleComponents(deduplicatedComponents, selectedComponents, activeCategory);
         setFilteredComponents(filtered);
         firstLoadRef.current = false;
       } else {
         setError(data.error || 'Failed to fetch components');
-        try { console.error('[ECS] API error:', data); } catch {}
-        // Attempt one-shot fallback if API router path fails but global list works
+        // Fallback: try all-components endpoint once per mount
         await tryFallbackFetch(activeCategory, dbCategory, controller.signal);
       }
     } catch (err) {
       if (err && err.name === 'AbortError') {
-        // Distinguish between timeout vs. rapid re-render
+        // Distinguish timeout vs normal abort for better messaging
         if (timedOutRef.current) {
           setError('Request timed out. Please check your server (Apache/MySQL) and try again.');
-          try { console.error('[ECS] Fetch aborted due to timeout'); } catch {}
+          // Fetch aborted due to timeout
           // Fallback on timeout as well
           const dbCategory = categoryMapping[activeCategory];
           await tryFallbackFetch(activeCategory, dbCategory);
         } else {
-          try { console.warn('[ECS] Fetch aborted due to new request (category changed)'); } catch {}
+          // Fetch aborted due to new request
           // If we have cached data for this category, use it to avoid spinner
           if (cacheRef.current[activeCategory]) {
             setComponents(cacheRef.current[activeCategory]);
@@ -221,7 +221,7 @@ const EnhancedComponentSelector = ({
       }
       if (!mountedRef.current) return;
       setError(`Failed to connect to server${err?.message ? `: ${err.message}` : ''}`);
-      try { console.error('[ECS] Fetch exception:', err); } catch {}
+      // Network/parse exception path
     } finally {
       if (!mountedRef.current) return;
       // Ensure any timeout for this request is cleared
@@ -232,7 +232,7 @@ const EnhancedComponentSelector = ({
     }
   }, [activeCategory, branch]);
 
-  // Fallback fetch: fetch all components then filter by category on the client
+  // Fallback fetch: client-side filter of a global list
   const tryFallbackFetch = useCallback(async (categoryKey, dbCategory, signal) => {
     if (fallbackTriedRef.current) return; // only once per mount to avoid loops
     fallbackTriedRef.current = true;
@@ -245,7 +245,7 @@ const EnhancedComponentSelector = ({
           return cat === dbCategory.toString().toLowerCase();
         });
         if (list.length > 0) {
-          // Deduplicate components by id, then by name+brand combination
+          // Deduplicate list similarly to primary path
           const deduplicatedComponents = [];
           const seenIds = new Set();
           const seenNames = new Set();
@@ -268,16 +268,15 @@ const EnhancedComponentSelector = ({
           const filtered = filterCompatibleComponents(deduplicatedComponents, selectedComponents, categoryKey);
           setFilteredComponents(filtered);
           setError(null);
-          try { console.warn('[ECS] Fallback list used for', dbCategory, 'count=', deduplicatedComponents.length); } catch {}
+          // Note that fallback list was used successfully
         }
       }
     } catch (e) {
       // Silent; keep existing UI state
-      try { console.error('[ECS] Fallback fetch failed:', e); } catch {}
     }
   }, [selectedComponents]);
 
-  // Debounce fetches to avoid rapid abort/restart loops during quick re-renders
+  // Debounce fetches to smooth frequent state changes
   useEffect(() => {
     try { if (debounceRef.current) clearTimeout(debounceRef.current); } catch {}
     debounceRef.current = setTimeout(() => {
@@ -286,7 +285,7 @@ const EnhancedComponentSelector = ({
     return () => { try { if (debounceRef.current) clearTimeout(debounceRef.current); } catch {} };
   }, [fetchComponents]);
 
-  // Re-filter components when selectedComponents change
+  // Recompute compatibility when selection or category changes
   useEffect(() => {
     if (components.length > 0) {
       const filtered = filterCompatibleComponents(components, selectedComponents, activeCategory);
@@ -294,12 +293,12 @@ const EnhancedComponentSelector = ({
     }
   }, [selectedComponents, activeCategory, components]);
 
-  // Track whether we already have data loaded for any category
+  // Track presence of data to decide between full loading vs soft refresh
   useEffect(() => {
     hasDataRef.current = components && components.length > 0;
   }, [components]);
 
-  // Sort components
+  // Sort helpers for name/brand/price
   const sortComponents = (componentsToSort) => {
     return [...componentsToSort].sort((a, b) => {
       switch (sortBy) {
@@ -315,7 +314,7 @@ const EnhancedComponentSelector = ({
     });
   };
 
-  // Filter components by search term
+  // Case-insensitive substring match for search
   const filterBySearch = (componentsToFilter) => {
     if (!searchTerm) return componentsToFilter;
     
@@ -326,10 +325,10 @@ const EnhancedComponentSelector = ({
     );
   };
 
-  // Get current category info
+  // Resolve current category metadata
   const currentCategory = categories.find(cat => cat.id === activeCategory);
 
-  // Smart suggestions for compatibility issues
+  // Smart suggestions: quick, human-readable hints when a key part is selected
   const getSmartSuggestions = () => {
     if (currentCategory?.id === 'motherboard' && selectedComponents.cpu) {
       const cpuName = selectedComponents.cpu.name?.toLowerCase() || '';
@@ -354,7 +353,7 @@ const EnhancedComponentSelector = ({
     return [];
   };
 
-  // Smart compatibility preview - shows what will be available next
+  // Compatibility preview: project later-category viability from current selection
   const getCompatibilityPreview = () => {
     if (!selectedComponents.cpu) return null;
     
@@ -387,7 +386,7 @@ const EnhancedComponentSelector = ({
     return preview;
   };
 
-  // Get alternative recommendations
+  // Alternative recommendations for better future compatibility
   const getAlternativeRecommendations = () => {
     return getSmartRecommendations(selectedComponents, activeCategory);
   };
@@ -432,7 +431,7 @@ const EnhancedComponentSelector = ({
    const [showRAMGuidance, setShowRAMGuidance] = useState(true);
    const [showCoolingGuidance, setShowCoolingGuidance] = useState(true);
 
-  // Get compatibility icon and color
+  // Small UI helpers for badges and icons
   const getCompatibilityIcon = (component) => {
     if (!component.compatibility) return null;
     
@@ -443,7 +442,7 @@ const EnhancedComponentSelector = ({
     }
   };
 
-  // Get compatibility badge
+  // Compatibility badge rendered in card corner
   const getCompatibilityBadge = (component) => {
     if (!component.compatibility) return null;
     
@@ -464,7 +463,7 @@ const EnhancedComponentSelector = ({
     }
   };
 
-  // Render component card
+  // Component card: image, key specs, compatibility snippet, and actions
   const renderComponentCard = (component, isCompatible = true) => {
     const isSelected = selectedComponents[activeCategory]?.id === component.id;
     const compatibilityIcon = getCompatibilityIcon(component);
@@ -686,20 +685,39 @@ const EnhancedComponentSelector = ({
         </select>
       </div>
 
-             {/* Compatibility Summary */}
-       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-blue-600" />
-            <span className="font-medium text-blue-900">Compatibility View</span>
+             {/* Enhanced Compatibility Summary */}
+       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Shield className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-blue-900">Compatibility View</h3>
+              <p className="text-sm text-blue-600">Component compatibility analysis</p>
+            </div>
           </div>
-          <span className="text-sm text-blue-700">
-            {filteredComponents.compatible.length} compatible • {filteredComponents.incompatible.length} incompatible
-          </span>
+          <div className="flex flex-col sm:items-end gap-1">
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <span className="font-medium text-green-700">{filteredComponents.compatible.length} compatible</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <span className="font-medium text-red-700">{filteredComponents.incompatible.length} incompatible</span>
+              </div>
+            </div>
+            <p className="text-xs text-blue-600 text-right">
+              Showing all components by default
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-blue-700 mt-1">
-          Showing all components by default. Use the toggle to hide incompatible items if you want a narrower list.
-        </p>
+        <div className="mt-3 pt-3 border-t border-blue-200">
+          <p className="text-sm text-blue-700">
+            Use the toggle below to hide incompatible items if you want a narrower selection list.
+          </p>
+        </div>
       </div>
 
                {/* Smart Compatibility Preview */}
@@ -1020,7 +1038,7 @@ const EnhancedComponentSelector = ({
               <CheckCircle className="w-5 h-5 text-green-500" />
               Compatible Components ({sortedCompatible.length})
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
               {sortedCompatible.map(component => renderComponentCard(component, true))}
             </div>
           </div>
@@ -1033,7 +1051,7 @@ const EnhancedComponentSelector = ({
               <XCircle className="w-5 h-5 text-red-500" />
               Incompatible Components ({sortedIncompatible.length})
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
               {sortedIncompatible.map(component => renderComponentCard(component, false))}
             </div>
           </div>

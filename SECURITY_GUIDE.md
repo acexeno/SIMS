@@ -78,7 +78,7 @@ APP_DEBUG=0
 - [ ] Set up alerts for suspicious activity
 - [ ] Regular security audits
 
-## 🔧 Security Configuration
+## Security Configuration
 
 ### JWT Configuration
 ```php

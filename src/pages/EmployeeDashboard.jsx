@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/apiBase'
-import { authorizedFetch } from '../utils/auth'
+import { authorizedFetch, ensureValidToken } from '../utils/auth'
 import { 
   BarChart3, 
   Package, 
@@ -98,44 +98,55 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
       setIsLoading(true);
       setError(null);
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${API_BASE}/index.php?endpoint=dashboard${branch ? `&branch=${branch}` : ''}` , {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        const text = await response.text();
-        let result;
-        try {
-          result = JSON.parse(text);
-        } catch (jsonErr) {
-          setError('Server returned invalid JSON.');
+        // Wait for authentication to be ready before making API calls
+        const token = await ensureValidToken();
+        if (!token) {
+          setError('Session expired. Please log in again.');
+          setInventory([]);
+          setOrders([]);
+          setReports({});
           return;
         }
-        if (result.success) {
-          const data = result.data;
-          setInventory(data.inventory || []);
-          setOrders(data.orders || []);
-          setReports(data.reports || {});
+        
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=dashboard${branch ? `&branch=${branch}` : ''}`, { method: 'GET' });
+        if (res.status === 401) {
+          // Avoid repeated bursts; show concise message
+          setError('Invalid token');
+          setInventory([]);
+          setOrders([]);
+          setReports({});
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (data && data.success) {
+          const payload = data.data || {};
+          setInventory(payload.inventory || []);
+          setOrders(payload.orders || []);
+          setReports(payload.reports || {});
         } else {
-          setError(result.error || 'API call was not successful');
+          setError((data && data.error) || 'API call was not successful');
         }
       } catch (error) {
         setError('Error fetching dashboard data.');
-        console.error("Error fetching dashboard data:", error);
+        console.error('Error fetching dashboard data:', error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
+    
+    // Add a small delay before initial fetch to ensure login is complete
+    const timeoutId = setTimeout(fetchData, 200);
     const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(interval);
+    };
   }, [branch]);
 
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const response = await fetch(`${API_BASE}/index.php?endpoint=categories`);
+        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=categories`);
         const result = await response.json();
         if (result.success) {
           setCategories(result.data);
@@ -502,11 +513,10 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                         onClick={async () => {
                           if (!window.confirm(`Delete '${item.name}'?`)) return;
                           try {
-                            const token = localStorage.getItem('token');
                             // Assumption: backend supports delete_component via POST
-                            const res = await fetch(`${API_BASE}/index.php?endpoint=delete_component`, {
+                            const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=delete_component`, {
                               method: 'POST',
-                              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                              headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ id: item.id })
                             });
                             const result = await res.json();
@@ -735,22 +745,53 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
     // Fetch the latest user profile on every tab change
     const fetchProfile = async () => {
       try {
-        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { method: 'GET' });
-        if (res.status === 401) return;
+        // Wait for authentication to be ready before making API calls
+        const token = await ensureValidToken();
+        if (!token) {
+          // No valid token for profile fetch, skipping
+          return;
+        }
+        
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { 
+          method: 'GET',
+          suppressUnauthorizedEvent: true 
+        });
+        if (res.status === 401) {
+          // 401 error in profile fetch, skipping
+          return;
+        }
         const data = await res.json().catch(() => ({}));
         if (data.success && data.user) {
           if (setUser) setUser(data.user);
         }
-      } catch {}
+      } catch (error) {
+        console.error('EmployeeDashboard: Error fetching profile:', error);
+      }
     };
-    fetchProfile();
+    
+    // Add a small delay to let authentication stabilize
+    const timeoutId = setTimeout(fetchProfile, 500);
+    return () => clearTimeout(timeoutId);
   }, [activeTab, setUser]);
 
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { method: 'GET' });
-        if (res.status === 401) return;
+        // Wait for authentication to be ready before making API calls
+        const token = await ensureValidToken();
+        if (!token) {
+          // No valid token for profile interval fetch, skipping
+          return;
+        }
+        
+        const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=profile`, { 
+          method: 'GET',
+          suppressUnauthorizedEvent: true 
+        });
+        if (res.status === 401) {
+          // 401 error in profile interval fetch, skipping
+          return;
+        }
         const data = await res.json().catch(() => ({}));
         if (data.success && data.user) {
           if (typeof initialInventoryAccess !== 'undefined' && data.user.can_access_inventory !== initialInventoryAccess) {
@@ -758,10 +799,10 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
           }
           if (setUser) setUser(data.user);
         }
-      } catch (e) {
-        // Optionally handle error
+      } catch (error) {
+        console.error('EmployeeDashboard: Error in profile interval fetch:', error);
       }
-    }, 10000); // every 10 seconds
+    }, 15000); // Increased to 15 seconds to reduce frequency
     return () => clearInterval(interval);
   }, [setUser, initialInventoryAccess]);
 
@@ -848,12 +889,11 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     e.preventDefault();
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
       const endpoint = form.id ? 'update_component' : 'create_component';
       // NOTE: backend endpoints are assumed (create_component/update_component). If they differ, adapt accordingly.
-      const res = await fetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
       const result = await res.json();

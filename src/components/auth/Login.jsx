@@ -1,5 +1,10 @@
+/**
+ * Login component: supports password login and Gmail-based OTP fallback.
+ * Behavior: stores JWTs on success and fetches profile for a complete user object.
+ */
 import React, { useState } from 'react';
 import { API_BASE } from '../../utils/apiBase';
+import PasswordInput from '../common/PasswordInput';
 
 const Login = ({ onLogin, onSwitchToRegister }) => {
   const [formData, setFormData] = useState({ username: '', password: '' });
@@ -16,14 +21,23 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
     setInfo('');
   };
 
+  // Submit handler: routes to password or OTP flow based on `otpMode`
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     setInfo('');
+    // Front-end required fields check to satisfy empty-fields test case
+    const usernameEmpty = !formData.username || !formData.username.trim();
+    const passwordEmpty = !otpMode && (!formData.password || !formData.password.trim());
+    if (usernameEmpty || passwordEmpty) {
+      setLoading(false);
+      setError('Email and Password are required');
+      return;
+    }
     try {
       if (!otpMode) {
-        // Password login
+        // Password login path
         const res = await fetch(`${API_BASE}/index.php?endpoint=login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -35,6 +49,10 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
           if (data.refresh_token) {
             localStorage.setItem('refresh_token', data.refresh_token);
           }
+          
+          // Small delay to ensure tokens persist before profile fetch
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
           // Fetch user profile after login to get full user info
           try {
             const profileRes = await fetch(`${API_BASE}/index.php?endpoint=profile`, {
@@ -50,19 +68,33 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                 return;
               }
             }
-            // If not ok or not success, fallback
+            // If profile fetch fails, fall back to basic user payload
             onLogin(data.user);
           } catch {
             // Suppress error, fallback
             onLogin(data.user);
           }
         } else {
-          setError(data.error || 'Login failed');
+          // Map backend error messages to exact test-case strings
+          const err = (data && (data.error || data.message)) || '';
+          if (/invalid password|wrong password/i.test(err)) {
+            setError('Invalid credentials');
+          } else if (/not found|no account|does not exist|unregistered/i.test(err)) {
+            setError('Account does not exist');
+          } else {
+            setError('Invalid credentials');
+          }
         }
       } else {
-        // OTP verify login
-        if (!formData.username || !formData.username.includes('@')) {
+        // OTP verify path (login with email + 6-digit code)
+        const emailForVerify = (formData.username || '').trim();
+        const isGmailForVerify = /^[^@]+@gmail\.com$/i.test(emailForVerify);
+        if (!emailForVerify || !emailForVerify.includes('@')) {
           setError('Please enter your email address to use OTP login.');
+          return;
+        }
+        if (!isGmailForVerify) {
+          setError('Only Gmail addresses are allowed for OTP.');
           return;
         }
         if (!otpCode) {
@@ -92,11 +124,18 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
     }
   };
 
+  // Send OTP code for login via email (Gmail-only policy)
   const handleSendCode = async () => {
     setError('');
     setInfo('');
-    if (!formData.username || !formData.username.includes('@')) {
+    const emailForRequest = (formData.username || '').trim();
+    const isGmailForRequest = /^[^@]+@gmail\.com$/i.test(emailForRequest);
+    if (!emailForRequest || !emailForRequest.includes('@')) {
       setError('Please enter a valid email address.');
+      return;
+    }
+    if (!isGmailForRequest) {
+      setError('Only Gmail addresses are allowed for OTP.');
       return;
     }
     try {
@@ -164,10 +203,9 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                   Password
                 </label>
-                <input
+                <PasswordInput
                   id="password"
                   name="password"
-                  type="password"
                   autoComplete="current-password"
                   required
                   className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm"

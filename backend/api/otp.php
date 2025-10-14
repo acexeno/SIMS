@@ -22,6 +22,8 @@ function ensureOtpSchema(PDO $pdo): void {
         INDEX idx_email_purpose_consumed (email, purpose, consumed_at),
         INDEX idx_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    // Non-breaking schema hardening: track requester IP for rate limiting (MySQL 8+ supports IF NOT EXISTS)
+    try { $pdo->exec("ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS requester_ip VARCHAR(64) NULL, ADD INDEX IF NOT EXISTS idx_ip_created (requester_ip, created_at)"); } catch (Throwable $t) { /* ignore if not supported */ }
 }
 
 function findUserByEmail(PDO $pdo, string $email): ?array {
@@ -36,9 +38,30 @@ function findUserByEmail(PDO $pdo, string $email): ?array {
 }
 
 function handleOtpRequest(PDO $pdo) {
-    $input = json_decode(file_get_contents('php://input'), true) ?: [];
-    $email = trim($input['email'] ?? '');
-    $purpose = trim($input['purpose'] ?? 'login'); // e.g., 'login', 'register', 'reset_password'
+    // Robust request parsing: JSON, form-encoded, or raw
+    $raw = file_get_contents('php://input');
+    $input = [];
+    if (is_string($raw) && $raw !== '') {
+        $json = json_decode($raw, true);
+        if (is_array($json)) {
+            $input = $json;
+        } else {
+            // Try to parse urlencoded key=value pairs from raw body
+            $tmp = [];
+            parse_str($raw, $tmp);
+            if (is_array($tmp) && !empty($tmp)) {
+                $input = $tmp;
+            }
+        }
+    }
+    // Fallback to $_POST if still empty
+    if (empty($input) && !empty($_POST)) {
+        $input = $_POST;
+    }
+
+    $email = trim((string)($input['email'] ?? ''));
+    $purpose = trim((string)($input['purpose'] ?? 'login')); // e.g., 'login', 'register', 'reset_password'
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         http_response_code(400);
@@ -46,11 +69,27 @@ function handleOtpRequest(PDO $pdo) {
         return;
     }
 
+    // Restrict OTP to Gmail addresses only
+    if (!preg_match('/@gmail\.com$/i', $email)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Only Gmail addresses are allowed for OTP.']);
+        return;
+    }
+
     ensureOtpSchema($pdo);
+
+    // Whitelist supported purposes to avoid abuse via arbitrary custom values
+    $allowedPurposes = ['login', 'register', 'reset_password'];
+    if (!in_array($purpose, $allowedPurposes, true)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Unsupported OTP purpose']);
+        return;
+    }
 
     // Rate limiting
     $cooldownSec = (int)env('OTP_REQUEST_COOLDOWN', '60'); // min seconds between requests
     $maxPerHour = (int)env('OTP_MAX_PER_HOUR', '5');
+    $maxPerHourIp = (int)env('OTP_MAX_IP_PER_HOUR', '20');
 
     // Check last request time for this email/purpose
     $stmt = $pdo->prepare("SELECT created_at FROM otp_codes WHERE email = ? AND purpose = ? ORDER BY id DESC LIMIT 1");
@@ -76,6 +115,34 @@ function handleOtpRequest(PDO $pdo) {
         return;
     }
 
+    // Per-IP rate limit across all emails/purposes
+    try {
+        $stmt = $pdo->prepare("SELECT COUNT(*) AS cnt FROM otp_codes WHERE requester_ip = ? AND created_at >= (NOW() - INTERVAL 1 HOUR)");
+        $stmt->execute([$ip]);
+        $ipCnt = (int)($stmt->fetch(PDO::FETCH_ASSOC)['cnt'] ?? 0);
+        if ($ipCnt >= $maxPerHourIp) {
+            http_response_code(429);
+            echo json_encode(['success' => false, 'error' => 'Too many OTP requests from your IP. Try again later.']);
+            return;
+        }
+    } catch (Throwable $t) { /* skip if column not available */ }
+
+    // Purpose-aware anti-abuse: do not send OTPs that cannot be used
+    $user = findUserByEmail($pdo, $email);
+    if ($purpose === 'login') {
+        // Only send login OTP to existing users; otherwise return generic success (no send) to avoid user enumeration and spam
+        if (!$user) {
+            echo json_encode(['success' => true, 'message' => 'If the account exists, a code has been sent.', 'ttl_minutes' => (int)env('OTP_TTL_MINUTES', '5'), 'cooldown_seconds' => (int)$cooldownSec]);
+            return;
+        }
+    } elseif ($purpose === 'register') {
+        // Only send register OTP to non-existing users; otherwise return generic success
+        if ($user) {
+            echo json_encode(['success' => true, 'message' => 'If the account does not already exist, a code has been sent.', 'ttl_minutes' => (int)env('OTP_TTL_MINUTES', '5'), 'cooldown_seconds' => (int)$cooldownSec]);
+            return;
+        }
+    }
+
     // Generate OTP
     try {
         $code = (string)random_int(100000, 999999); // 6-digit numeric
@@ -84,12 +151,19 @@ function handleOtpRequest(PDO $pdo) {
     }
     $ttlMin = (int)env('OTP_TTL_MINUTES', '5');
 
-    $user = findUserByEmail($pdo, $email);
+    // Link OTP to user when known (login/reset), else null for register
     $userId = $user['id'] ?? null;
 
     // Insert row
-    $stmt = $pdo->prepare("INSERT INTO otp_codes (user_id, email, purpose, code, expires_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))");
-    $stmt->execute([$userId, $email, $purpose, $code, $ttlMin]);
+    // Persist OTP with requester IP for audit/rate limiting
+    try {
+        $stmt = $pdo->prepare("INSERT INTO otp_codes (user_id, email, purpose, code, expires_at, requester_ip) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), ?)");
+        $stmt->execute([$userId, $email, $purpose, $code, $ttlMin, $ip]);
+    } catch (Throwable $t) {
+        // Fallback when column not present
+        $stmt = $pdo->prepare("INSERT INTO otp_codes (user_id, email, purpose, code, expires_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))");
+        $stmt->execute([$userId, $email, $purpose, $code, $ttlMin]);
+    }
 
     $appName = env('APP_NAME', 'SIMS');
     $subject = "$appName verification code";
@@ -118,10 +192,28 @@ function handleOtpRequest(PDO $pdo) {
 }
 
 function handleOtpVerify(PDO $pdo) {
-    $input = json_decode(file_get_contents('php://input'), true) ?: [];
-    $email = trim($input['email'] ?? '');
-    $purpose = trim($input['purpose'] ?? 'login');
-    $code = trim($input['code'] ?? '');
+    // Robust request parsing: JSON, form-encoded, or raw
+    $raw = file_get_contents('php://input');
+    $input = [];
+    if (is_string($raw) && $raw !== '') {
+        $json = json_decode($raw, true);
+        if (is_array($json)) {
+            $input = $json;
+        } else {
+            $tmp = [];
+            parse_str($raw, $tmp);
+            if (is_array($tmp) && !empty($tmp)) {
+                $input = $tmp;
+            }
+        }
+    }
+    if (empty($input) && !empty($_POST)) {
+        $input = $_POST;
+    }
+
+    $email = trim((string)($input['email'] ?? ''));
+    $purpose = trim((string)($input['purpose'] ?? 'login'));
+    $code = trim((string)($input['code'] ?? ''));
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $code === '') {
         http_response_code(400);

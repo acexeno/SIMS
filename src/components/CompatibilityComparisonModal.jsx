@@ -31,6 +31,7 @@ const CompatibilityComparisonModal = ({
   onComponentSelect 
 }) => {
   const [activeTab, setActiveTab] = useState('compatible');
+  const [showIncompatible, setShowIncompatible] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [filteredComponents, setFilteredComponents] = useState({ compatible: [], incompatible: [] });
@@ -385,6 +386,17 @@ const CompatibilityComparisonModal = ({
               <option value="price">Sort by Price</option>
               <option value="brand">Sort by Brand</option>
             </select>
+            <div className="flex items-center gap-2 ml-auto">
+              <input
+                id="toggle-incompatible"
+                type="checkbox"
+                checked={showIncompatible}
+                onChange={(e) => setShowIncompatible(e.target.checked)}
+              />
+              <label htmlFor="toggle-incompatible" className="text-sm text-gray-700 select-none">
+                Show Incompatible
+              </label>
+            </div>
           </div>
         </div>
 
@@ -439,19 +451,27 @@ const CompatibilityComparisonModal = ({
                 </div>
               )
             ) : (
-              filteredComponents.incompatible.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {filteredComponents.incompatible.map(component => 
-                    renderComponentCard(component, false)
-                  )}
-                </div>
+              showIncompatible ? (
+                filteredComponents.incompatible.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {filteredComponents.incompatible.map(component => 
+                      renderComponentCard(component, false)
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <XCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No Incompatible Components</h3>
+                    <p className="text-gray-600">
+                      {searchTerm ? 'Try adjusting your search terms.' : 'All components are compatible with your current selections.'}
+                    </p>
+                  </div>
+                )
               ) : (
                 <div className="text-center py-12">
                   <XCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No Incompatible Components</h3>
-                  <p className="text-gray-600">
-                    {searchTerm ? 'Try adjusting your search terms.' : 'All components are compatible with your current selections.'}
-                  </p>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Show Incompatible</h3>
+                  <p className="text-gray-600">Toggle "Show Incompatible" to view incompatible options</p>
                 </div>
               )
             )}

@@ -2,7 +2,17 @@
 // Usage: import { formatCurrencyPHP } from '../utils/currency';
 
 export function formatCurrencyPHP(amount, options = {}) {
-  const value = Number(amount) || 0;
+  // Robust numeric parsing: accept strings with commas and extraneous text
+  const numeric = (() => {
+    if (typeof amount === 'number' && Number.isFinite(amount)) return amount;
+    if (typeof amount === 'string') {
+      const cleaned = amount.replace(/[^0-9.\-]/g, '');
+      const parsed = Number(cleaned);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+  })();
+  const value = numeric;
   const formatter = new Intl.NumberFormat('en-PH', {
     style: 'currency',
     currency: 'PHP',

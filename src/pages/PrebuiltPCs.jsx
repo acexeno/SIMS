@@ -302,24 +302,12 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
         if (KEY_MAP[k]) canon[k] = componentsForEdit[k];
       });
 
-      // If original prebuilt intended a cooler but fetch missed it (e.g., stale ID), auto-fill a cooler
-      const originalKeySet = Object.keys(componentIds || {}).map(k => k.toLowerCase());
-      const intendedCooler = (KEY_MAP.cooler || []).some(alias => originalKeySet.includes(alias));
-      if (intendedCooler && !canon.cooler) {
-        const fallbackCooler = await fetchCheapestForCategory('cooler');
-        if (fallbackCooler) canon.cooler = fallbackCooler;
-      }
-      // Also, if the prebuilt itself is categorized as "cooling", ensure we include a cooler
-      if (String(pc.category || '').toLowerCase() === 'cooling' && !canon.cooler) {
-        const fallbackCooler2 = await fetchCheapestForCategory('cooler');
-        if (fallbackCooler2) canon.cooler = fallbackCooler2;
-      }
-      // Auto-complete any missing required categories with a sensible cheapest option
+      // Do not auto-fill missing components. Enforce that prebuilts must be complete.
       const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
       const missing = required.filter(k => !canon[k]);
       if (missing.length > 0) {
-        const results = await Promise.all(missing.map(k => fetchCheapestForCategory(k)));
-        results.forEach((comp, idx) => { if (comp) canon[missing[idx]] = comp; });
+        alert('This prebuilt is incomplete and cannot be loaded. Missing: ' + missing.join(', '));
+        return;
       }
 
       // Persist to localStorage for consistency with other flows
@@ -350,7 +338,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
     // Prevent the card click event from firing
     e.stopPropagation();
     // Handle buy now logic here
-    console.log('Buy Now clicked for:', pc.name);
+    // Buy Now clicked for prebuilt PC
     // You can add your purchase logic here
   }
 
@@ -643,8 +631,13 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
 
   // Derived prebuilt list with price filter
   const priceToNumber = (value) => {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/[^0-9.\-]/g, '');
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
   };
   const filteredPrebuilts = prebuilts
     .filter(pc => selectedCategory === 'all' || pc.category === selectedCategory)
@@ -751,7 +744,8 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                   className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 >
                   <option value="name">Sort by Name</option>
-                  <option value="price">Sort by Price</option>
+                  <option value="price-asc">Price: Low to High</option>
+                  <option value="price-desc">Price: High to Low</option>
                 </select>
               </div>
 
@@ -851,7 +845,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                 <div className="col-span-full">
                   <div className="card p-8 text-center text-gray-600">
                     <Package className="w-10 h-10 text-gray-400 mx-auto mb-2" />
-                    No prebuilts match your filters.
+                    No results found
                   </div>
                 </div>
               )}
@@ -913,7 +907,7 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
                       </li>
                       <li className="flex items-center gap-1">
                         <Coins className="w-4 h-4 text-green-500" />
-                        <span className="font-medium">Price:</span> {formatCurrencyPHP(pc.price)}
+                        <span className="font-medium">Price:</span> {formatCurrencyPHP(pc.price, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </li>
                     </ul>
                   </div>

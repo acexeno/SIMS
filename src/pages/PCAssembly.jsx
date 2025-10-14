@@ -1,3 +1,7 @@
+/**
+ * PCAssembly: guided build flow with compatibility, recommendations, and ordering.
+ * Maintains internal state when prebuilt not provided; persists selection for UX.
+ */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { 
   CheckCircle, 
@@ -142,9 +146,13 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
 
   // Update compatibility score when components change
   useEffect(() => {
-    const score = getCompatibilityScore(selectedComponents);
-    setCompatibilityScore(score.score);
-  }, [selectedComponents]);
+    // Only calculate compatibility if components are loaded
+    if (!componentsLoaded) return;
+    
+    // Use the imported getCompatibilityScore function which calculates compatibility directly
+    const compatibilityResult = getCompatibilityScore(selectedComponents);
+    setCompatibilityScore(compatibilityResult.score);
+  }, [selectedComponents, componentsLoaded]);
 
   // Fetch all components for compatibility comparison
   useEffect(() => {
@@ -539,6 +547,36 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     return suggestions;
   }, [selectedComponents, getComponentSpec]);
 
+  // Helper functions for compatibility score styling
+  const getCompatibilityScoreColor = (score, isBackground = false) => {
+    if (score >= 90) return isBackground ? 'bg-green-500' : 'text-green-600';
+    if (score >= 70) return isBackground ? 'bg-yellow-500' : 'text-yellow-600';
+    if (score >= 50) return isBackground ? 'bg-orange-500' : 'text-orange-600';
+    return isBackground ? 'bg-red-500' : 'text-red-600';
+  };
+
+  const getCompatibilityStatusStyle = (score) => {
+    if (score >= 90) return 'bg-green-50 border-green-400';
+    if (score >= 70) return 'bg-yellow-50 border-yellow-400';
+    if (score >= 50) return 'bg-orange-50 border-orange-400';
+    return 'bg-red-50 border-red-400';
+  };
+
+  const getCompatibilityStatusTextColor = (score) => {
+    if (score >= 90) return 'text-green-800';
+    if (score >= 70) return 'text-yellow-800';
+    if (score >= 50) return 'text-orange-800';
+    return 'text-red-800';
+  };
+
+  const getCompatibilityStatusMessage = (score) => {
+    if (score >= 90) return 'Excellent! Your build is highly compatible and ready for assembly.';
+    if (score >= 70) return 'Good compatibility with minor optimizations available.';
+    if (score >= 50) return 'Moderate compatibility - some components may need adjustment.';
+    if (score > 0) return 'Low compatibility - significant issues detected that need attention.';
+    return 'No components selected yet - start building to see compatibility score.';
+  };
+
   // Event handlers
   const handleComponentSelect = useCallback((category, component) => {
     setSelectedComponents(prev => ({
@@ -617,42 +655,23 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       }, 0);
   }, [selectedComponents]);
 
-  const getCompatibilityScore = useCallback(() => {
+  const getLocalCompatibilityScore = useCallback(() => {
     const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
     const selectedCount = requiredCategories.filter(category => {
       const component = selectedComponents[category];
-      return component !== null && component !== undefined && Object.keys(component).length > 0;
+      // More robust check for valid components
+      if (!component) return false;
+      if (typeof component !== 'object') return false;
+      if (Object.keys(component).length === 0) return false;
+      // Check if component has essential properties
+      return component.id && component.name;
     }).length;
     if (selectedCount === 0) return 0;
     
-    // Define all possible compatibility checks
-    const allChecks = [
-      'cpu_motherboard',
-      'ram_motherboard', 
-      'ram_slots',
-      'ram_speed',
-      'storage_interface',
-      'psu_power',
-      'psu_form_factor',
-      'case_motherboard',
-      'gpu_length',
-      'cooler_height',
-      'cooler_socket',
-      'ram_cpu_speed'
-    ];
-    
-    // Count only the checks that are actually performed (have a status)
-    const performedChecks = allChecks.filter(check => compatibilityStatus[check] !== undefined);
-    if (performedChecks.length === 0) return 0;
-    
-    let failed = 0;
-    performedChecks.forEach(check => {
-      if (compatibilityStatus[check] === false) failed++;
-    });
-    
-    const passed = performedChecks.length - failed;
-    return Math.round((passed / performedChecks.length) * 100);
-  }, [selectedComponents, compatibilityStatus]);
+    // Use the imported getCompatibilityScore function for consistent calculation
+    const compatibilityResult = getCompatibilityScore(selectedComponents);
+    return compatibilityResult.score;
+  }, [selectedComponents]);
 
   const getCategoriesWithIssues = useCallback(() => {
     const issues = [];
@@ -685,7 +704,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
     return requiredCategories.filter(category => {
       const component = selectedComponents[category];
-      return component !== null && component !== undefined && Object.keys(component).length > 0;
+      // More robust check for valid components
+      if (!component) return false;
+      if (typeof component !== 'object') return false;
+      if (Object.keys(component).length === 0) return false;
+      // Check if component has essential properties
+      return component.id && component.name;
     }).length;
   }, [selectedComponents]);
 
@@ -740,7 +764,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
     const selectedCount = requiredCategories.filter(category => {
       const component = selectedComponents[category];
-      return component !== null && component !== undefined && Object.keys(component).length > 0;
+      // More robust check for valid components
+      if (!component) return false;
+      if (typeof component !== 'object') return false;
+      if (Object.keys(component).length === 0) return false;
+      // Check if component has essential properties
+      return component.id && component.name;
     }).length;
     return Math.round((selectedCount / requiredCategories.length) * 100);
   }, [selectedComponents]);
@@ -774,6 +803,24 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Helper to check if there are any critical compatibility issues
   const hasCriticalCompatibilityIssues = Object.values(compatibilityStatus).some(status => status === false);
 
+  // Helper for explicit test-case messages
+  const getBuildStatusMessage = () => {
+    const requiredComplete = getSelectedRequiredComponentsCount() === getRequiredComponentsCount();
+    if (!requiredComplete) {
+      return 'Build incomplete, please add more components';
+    }
+    if (hasCriticalCompatibilityIssues) {
+      if (compatibilityStatus.cpu_motherboard === false) {
+        return 'Incompatible: Socket mismatch';
+      }
+      return 'Compatibility issues detected';
+    }
+    if (getLocalCompatibilityScore() === 100) {
+      return 'Build compatible and ready';
+    }
+    return '';
+  };
+
   // Save build function
   const isTokenExpired = (token) => {
     try {
@@ -797,11 +844,15 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     try {
       // Require all required components
       if (getSelectedRequiredComponentsCount() < getRequiredComponentsCount()) {
-        alert('Please complete selecting all required components before proceeding.');
+        alert('Build incomplete, please add more components');
         return;
       }
       if (hasCriticalCompatibilityIssues) {
-        alert('Please resolve critical compatibility issues before proceeding.');
+        if (compatibilityStatus.cpu_motherboard === false) {
+          alert('Incompatible: Socket mismatch');
+        } else {
+          alert('Please resolve critical compatibility issues before proceeding.');
+        }
         return;
       }
 
@@ -889,7 +940,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         description: buildDescription,
         components: filteredComponents,
         // Use the precomputed compatibilityScore state, which is updated by the
-        // compatibilityService as components change. The local getCompatibilityScore()
+        // compatibilityService as components change. The local getLocalCompatibilityScore()
         // can be 0 if checks haven't run yet when saving.
         compatibility: compatibilityScore,
         totalPrice: getTotalPrice(),
@@ -1033,44 +1084,56 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
             initialComponents = getNormalizedComponents(prebuiltComponents);
           }
         } else {
-          // Load from localStorage
-          const saved = localStorage.getItem('builditpc-selected-components');
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              initialComponents = getNormalizedComponents(parsed);
-              const hasComponents = Object.values(parsed).some(component => component !== null);
-              if (hasComponents) {
-                setShowRestoreNotification(true);
-                setTimeout(() => setShowRestoreNotification(false), 5000);
+          // Load from localStorage only if user is authenticated
+          if (user && user.id) {
+            const saved = localStorage.getItem('builditpc-selected-components');
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                initialComponents = getNormalizedComponents(parsed);
+                const hasComponents = Object.values(parsed).some(component => 
+                  component !== null && component !== undefined && 
+                  typeof component === 'object' && Object.keys(component).length > 0 &&
+                  component.id && component.name
+                );
+                if (hasComponents) {
+                  setShowRestoreNotification(true);
+                  setTimeout(() => setShowRestoreNotification(false), 5000);
+                }
+              } catch (error) {
+                console.error('Error parsing saved components:', error);
               }
-            } catch (error) {
-              console.error('Error parsing saved components:', error);
             }
+          } else {
+            // For non-authenticated users, clear any existing localStorage data
+            localStorage.removeItem('builditpc-selected-components');
+            localStorage.removeItem('builditpc-editing-build');
           }
         }
         setSelectedComponents(initialComponents);
         setComponentsLoaded(true);
         if (onLoaded) onLoaded();
-        // Check for editing build
-        const editingBuildData = localStorage.getItem('builditpc-editing-build');
-        if (editingBuildData) {
-          try {
-            const editingBuild = JSON.parse(editingBuildData);
-            const candidateId = typeof editingBuild.id === 'string' ? parseInt(editingBuild.id, 10) : editingBuild.id;
-            if (Number.isFinite(candidateId) && candidateId > 0) {
-              setIsEditing(true);
-              setEditingBuildId(candidateId);
-            } else {
-              // Coming from a prebuilt (name/description only) – not an edit
-              setIsEditing(false);
-              setEditingBuildId(null);
+        // Check for editing build only if user is authenticated
+        if (user && user.id) {
+          const editingBuildData = localStorage.getItem('builditpc-editing-build');
+          if (editingBuildData) {
+            try {
+              const editingBuild = JSON.parse(editingBuildData);
+              const candidateId = typeof editingBuild.id === 'string' ? parseInt(editingBuild.id, 10) : editingBuild.id;
+              if (Number.isFinite(candidateId) && candidateId > 0) {
+                setIsEditing(true);
+                setEditingBuildId(candidateId);
+              } else {
+                // Coming from a prebuilt (name/description only) – not an edit
+                setIsEditing(false);
+                setEditingBuildId(null);
+              }
+              // Use provided name/description to prefill the form even if not editing
+              setBuildName(editingBuild.name || '');
+              setBuildDescription(editingBuild.description || '');
+            } catch (error) {
+              console.error('Error parsing editing build data:', error);
             }
-            // Use provided name/description to prefill the form even if not editing
-            setBuildName(editingBuild.name || '');
-            setBuildDescription(editingBuild.description || '');
-          } catch (error) {
-            console.error('Error parsing editing build data:', error);
           }
         }
         initializedRef.current = true;
@@ -1085,6 +1148,9 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
 
   // Enhanced Compatibility check useEffect
   useEffect(() => {
+    // Only run compatibility checks if components are loaded
+    if (!componentsLoaded) return;
+    
     const issues = {};
     const details = {};
 
@@ -1444,10 +1510,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
 
     setCompatibilityStatus(issues);
     setCompatibilityDetails(details);
-  }, [selectedComponents]);
+  }, [selectedComponents, componentsLoaded]);
 
-  // Save to localStorage
+  // Save to localStorage (only for authenticated users)
   useEffect(() => {
+    if (!user || !user.id) return; // Only save for authenticated users
+    
     const componentsJson = JSON.stringify(selectedComponents);
     const prevComponentsJson = prevComponentsRef.current;
     
@@ -1456,7 +1524,17 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       localStorage.setItem('builditpc-selected-components', componentsJson);
       prevComponentsRef.current = componentsJson;
     }
-  }, [selectedComponents]);
+  }, [selectedComponents, user]);
+
+  // Clear localStorage when user logs out
+  useEffect(() => {
+    if (!user || !user.id) {
+      // User is not authenticated, clear localStorage
+      localStorage.removeItem('builditpc-selected-components');
+      localStorage.removeItem('builditpc-editing-build');
+      prevComponentsRef.current = null;
+    }
+  }, [user]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1527,7 +1605,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       )}
       {/* Header Section */}
       <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-6">
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-3">
@@ -1584,23 +1662,57 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
-          {/* Main Content Area */}
-          <div className="xl:col-span-3 space-y-8">
-            {/* Progress Steps */}
+      <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-8">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8">
+          {/* Main Content Area - Responsive width for better space utilization */}
+          <div className="xl:col-span-8 2xl:col-span-9 space-y-6 lg:space-y-8">
+            {/* Enhanced Progress Steps */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold text-gray-900">Build Progress</h2>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <span>{getSelectedRequiredComponentsCount()}</span>
-                  <span>/</span>
-                  <span>{getRequiredComponentsCount()}</span>
-                  <span>components</span>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <CheckSquare className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Build Progress</h2>
+                    <p className="text-sm text-gray-600">Track your component selection progress</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-green-600">
+                      {getSelectedRequiredComponentsCount()}/{getRequiredComponentsCount()}
+                    </div>
+                    <div className="text-sm text-gray-600">components selected</div>
+                  </div>
+                  <div className="w-16 h-16 relative">
+                    <svg className="w-16 h-16 transform -rotate-90" viewBox="0 0 36 36">
+                      <path
+                        className="text-gray-200"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                      <path
+                        className="text-green-600"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        fill="none"
+                        strokeDasharray={`${(getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100}, 100`}
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-sm font-semibold text-gray-700">
+                        {Math.round((getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100)}%
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
               
-              <div className="grid grid-cols-4 lg:grid-cols-8 gap-4">
+              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-8 2xl:grid-cols-8 gap-3 lg:gap-4">
                 {componentCategories.map((category, index) => {
                   const isSelected = selectedComponents[category.key];
                   const isActive = index + 1 === activeStep;
@@ -1699,47 +1811,104 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 </div>
               </div>
               
-              <div className="p-6">
-                {/* Compatibility Comparison Button */}
-                <div className="mb-6 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <button
-                      onClick={() => setShowCompatibilityModal(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                    >
-                      <Filter className="w-4 h-4" />
-                      Compare Compatibility
-                    </button>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Shield className="w-4 h-4" />
-                      <span>Compatibility Score: {compatibilityScore}%</span>
-                    </div>
-                  </div>
-                  {/* Branch selector */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">Branch:</span>
-                    <div className="inline-flex rounded-lg border overflow-hidden">
-                      <button
-                        className={`px-3 py-1 text-sm ${branch === null ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                        onClick={() => setBranch(null)}
-                        type="button"
-                      >
-                        All
-                      </button>
-                      <button
-                        className={`px-3 py-1 text-sm border-l ${branch === 'BULACAN' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                        onClick={() => setBranch('BULACAN')}
-                        type="button"
-                      >
-                        Bulacan
-                      </button>
-                      <button
-                        className={`px-3 py-1 text-sm border-l ${branch === 'MARIKINA' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                        onClick={() => setBranch('MARIKINA')}
-                        type="button"
-                      >
-                        Marikina
-                      </button>
+              <div className="p-6 lg:p-8">
+                {/* Enhanced Compatibility Section */}
+                <div className="mb-8">
+                  {/* Compatibility Score and Comparison Section */}
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-6 mb-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      {/* Left side - Compatibility Score with detailed bar */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="p-2 bg-blue-100 rounded-lg">
+                            <Shield className="w-5 h-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Compatibility Score</h3>
+                            <p className="text-sm text-gray-600">Overall system compatibility rating</p>
+                          </div>
+                        </div>
+                        
+                        {/* Detailed Compatibility Score Display */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700">System Compatibility</span>
+                            <span className={`text-lg font-bold ${getCompatibilityScoreColor(compatibilityScore)}`}>
+                              {compatibilityScore}%
+                            </span>
+                          </div>
+                          
+                          {/* Enhanced Progress Bar */}
+                          <div className="relative">
+                            <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                              <div 
+                                className={`h-4 rounded-full transition-all duration-1000 ease-out ${getCompatibilityScoreColor(compatibilityScore, true)}`}
+                                style={{ width: `${compatibilityScore}%` }}
+                              ></div>
+                            </div>
+                            {/* Progress indicators */}
+                            <div className="flex justify-between mt-1 text-xs text-gray-500">
+                              <span>0%</span>
+                              <span>25%</span>
+                              <span>50%</span>
+                              <span>75%</span>
+                              <span>100%</span>
+                            </div>
+                          </div>
+                          
+                          {/* Compatibility Status Message */}
+                          <div className={`p-3 rounded-lg border-l-4 ${getCompatibilityStatusStyle(compatibilityScore)}`}>
+                            <p className={`text-sm font-medium ${getCompatibilityStatusTextColor(compatibilityScore)}`}>
+                              {getCompatibilityStatusMessage(compatibilityScore)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Right side - Actions and Branch Selector */}
+                      <div className="flex flex-col gap-4">
+                        <button
+                          onClick={() => setShowCompatibilityModal(true)}
+                          className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm"
+                        >
+                          <Filter className="w-4 h-4" />
+                          Compare Compatibility
+                        </button>
+                        {/* Exact test-case status messaging */}
+                        <div className="text-sm text-gray-700 text-center">
+                          {getBuildStatusMessage()}
+                        </div>
+                        
+                        {/* Branch selector with better spacing */}
+                        <div className="bg-white rounded-lg border border-gray-200 p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-medium text-gray-700">Branch Filter:</span>
+                          </div>
+                          <div className="inline-flex rounded-lg border overflow-hidden shadow-sm">
+                            <button
+                              className={`px-4 py-2 text-sm font-medium transition-colors ${branch === null ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                              onClick={() => setBranch(null)}
+                              type="button"
+                            >
+                              All Branches
+                            </button>
+                            <button
+                              className={`px-4 py-2 text-sm font-medium border-l transition-colors ${branch === 'BULACAN' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                              onClick={() => setBranch('BULACAN')}
+                              type="button"
+                            >
+                              Bulacan
+                            </button>
+                            <button
+                              className={`px-4 py-2 text-sm font-medium border-l transition-colors ${branch === 'MARIKINA' ? 'bg-green-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                              onClick={() => setBranch('MARIKINA')}
+                              type="button"
+                            >
+                              Marikina
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1836,175 +2005,247 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
             )}
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-6">
+          {/* Enhanced Sidebar - Responsive width for better space utilization */}
+          <div className="xl:col-span-4 2xl:col-span-3 space-y-6 lg:space-y-8">
             {/* Compatibility Status */}
             <CompatibilityChecker 
               compatibilityStatus={compatibilityStatus}
-              compatibilityScore={getCompatibilityScore()}
+              compatibilityScore={getLocalCompatibilityScore()}
               compatibilityDetails={compatibilityDetails}
               selectionProgress={getComponentSelectionProgress()}
             />
 
-            {/* Build Summary */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                  <ShoppingCart className="w-6 h-6 text-green-600" />
+            {/* Enhanced Build Summary */}
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+              {/* Header Section */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-gradient-to-br from-green-100 to-blue-100 rounded-xl">
+                      <ShoppingCart className="w-7 h-7 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold text-gray-900">Build Summary</h3>
+                      <p className="text-gray-600">Track your PC build progress and components</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-3xl font-bold text-green-600">
+                      {Math.round((getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100)}%
+                    </div>
+                    <div className="text-sm text-gray-600">Complete</div>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Build Summary</h3>
-                  <p className="text-sm text-gray-600">
-                    {getSelectedRequiredComponentsCount()} of {getRequiredComponentsCount()} required components
-                  </p>
-                </div>
-              </div>
-              
-              {/* Progress Bar */}
-              <div className="mb-6">
-                <div className="flex justify-between text-sm text-gray-600 mb-2">
-                  <span>Build Progress</span>
-                  <span>{Math.round((getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100)}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div 
-                    className="bg-gradient-to-r from-green-500 to-green-600 h-3 rounded-full transition-all duration-500 shadow-sm"
-                    style={{ width: `${(getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100}%` }}
-                  ></div>
+                
+                {/* Enhanced Progress Section */}
+                <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-4 mb-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-semibold text-gray-700">Build Progress</span>
+                    <span className="text-sm font-bold text-gray-900">
+                      {getSelectedRequiredComponentsCount()}/{getRequiredComponentsCount()} Components
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-4 mb-3">
+                    <div 
+                      className="bg-gradient-to-r from-green-500 to-green-600 h-4 rounded-full transition-all duration-700 shadow-sm"
+                      style={{ width: `${(getSelectedRequiredComponentsCount() / getRequiredComponentsCount()) * 100}%` }}
+                    ></div>
+                  </div>
+                  
+                  {/* Status Message */}
+                  <div className={`p-3 rounded-lg border-l-4 ${
+                    getSelectedRequiredComponentsCount() === 0 
+                      ? 'bg-blue-50 border-blue-400' 
+                      : getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
+                      ? 'bg-green-50 border-green-400'
+                      : 'bg-yellow-50 border-yellow-400'
+                  }`}>
+                    <p className={`text-sm font-medium ${
+                      getSelectedRequiredComponentsCount() === 0 
+                        ? 'text-blue-800' 
+                        : getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
+                        ? 'text-green-800'
+                        : 'text-yellow-800'
+                    }`}>
+                      {getSelectedRequiredComponentsCount() === 0
+                        ? "Start building by selecting components from the categories above"
+                        : getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
+                        ? "Build complete! Ready for final review and ordering"
+                        : `${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components needed to complete your build`
+                      }
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {/* Selected Components */}
-              <div className="space-y-3 mb-6 max-h-64 overflow-y-auto">
-                {Object.entries(selectedComponents).map(([category, component]) => (
-                  component && (
-                    <div key={category} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-medium text-green-600">
-                            {category === 'motherboard' ? 'MB' : 
-                             category === 'gpu' ? 'GPU' : 
-                             category === 'storage' ? 'SSD' : 
-                             category === 'psu' ? 'PSU' : 
-                             category === 'cooler' ? 'FAN' : 
-                             category.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-gray-900 text-sm truncate">{component.name}</p>
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className="font-semibold text-green-600">{formatCurrencyPHP(component.price)}</span>
-                            <span>•</span>
-                            <span className="truncate">
-                              {component.socket && `Socket: ${component.socket}`}
-                              {component.memory && `Memory: ${component.memory}`}
-                              {component.type && component.speed && `${component.type} ${component.speed}`}
-                              {component.capacity && `Capacity: ${component.capacity}`}
-                              {component.wattage && `${component.wattage}W`}
-                              {component.size && `Size: ${component.size}`}
-                            </span>
+              {/* Enhanced Selected Components */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-semibold text-gray-900">Selected Components</h4>
+                  <span className="text-sm text-gray-500">{getSelectedComponentsCount()} items</span>
+                </div>
+                
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
+                  {Object.entries(selectedComponents).map(([category, component]) => (
+                    component && (
+                      <div key={category} className="group bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl border border-gray-200 p-4 hover:shadow-md transition-all duration-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
+                            <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                              <span className="text-sm font-bold text-green-600">
+                                {category === 'motherboard' ? 'MB' : 
+                                 category === 'gpu' ? 'GPU' : 
+                                 category === 'storage' ? 'SSD' : 
+                                 category === 'psu' ? 'PSU' : 
+                                 category === 'cooler' ? 'FAN' : 
+                                 category.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h5 className="font-semibold text-gray-900 text-sm mb-1 truncate">{component.name}</h5>
+                              <div className="flex items-center gap-3 text-xs text-gray-600">
+                                <span className="font-bold text-green-600 text-sm">{formatCurrencyPHP(component.price)}</span>
+                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
+                                <span className="truncate">
+                                  {component.socket && `Socket: ${component.socket}`}
+                                  {component.memory && `Memory: ${component.memory}`}
+                                  {component.type && component.speed && `${component.type} ${component.speed}`}
+                                  {component.capacity && `Capacity: ${component.capacity}`}
+                                  {component.wattage && `${component.wattage}W`}
+                                  {component.size && `Size: ${component.size}`}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                            <button
+                              onClick={() => handleComponentRemove(category)}
+                              className="p-2 text-red-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-all duration-200 opacity-0 group-hover:opacity-100"
+                              title="Remove component"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={() => handleComponentRemove(category)}
-                          className="p-1.5 text-red-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
-                          title="Remove component"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                    )
+                  ))}
+                  
+                  {getSelectedComponentsCount() === 0 && (
+                    <div className="text-center py-12 bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl border-2 border-dashed border-gray-300">
+                      <div className="p-4 bg-white rounded-full w-20 h-20 mx-auto mb-4 flex items-center justify-center">
+                        <Package className="w-10 h-10 text-gray-400" />
+                      </div>
+                      <h4 className="text-lg font-semibold text-gray-900 mb-2">No Components Selected</h4>
+                      <p className="text-gray-600 mb-4">Start building by selecting components from the categories above</p>
+                      <div className="flex items-center justify-center gap-2 text-sm text-blue-600">
+                        <ArrowRight className="w-4 h-4" />
+                        <span>Choose your first component to begin</span>
                       </div>
                     </div>
-                  )
-                ))}
-                
-                {getSelectedComponentsCount() === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                    <p className="text-sm font-medium">No components selected yet</p>
-                    <p className="text-xs">Start building by selecting components</p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* Price Summary */}
-              <div className="border-t pt-6">
-                <div className="space-y-3 mb-6">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600">Subtotal:</span>
-                    <span className="font-medium">{formatCurrencyPHP(getTotalPrice())}</span>
+              {/* Enhanced Price Summary */}
+              <div className="bg-gradient-to-r from-gray-50 to-green-50 rounded-xl p-6 border border-gray-200">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <span className="text-green-600 text-lg font-bold">₱</span>
                   </div>
-                  <div className="flex items-center justify-between text-lg font-semibold border-t pt-3">
-                    <span className="text-gray-900">Total:</span>
-                    <span className="text-2xl font-bold text-green-600">
+                  <h4 className="text-lg font-semibold text-gray-900">Price Summary</h4>
+                </div>
+                
+                <div className="space-y-4 mb-6">
+                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
+                    <span className="text-gray-600 font-medium">Subtotal:</span>
+                    <span className="text-lg font-semibold text-gray-900">{formatCurrencyPHP(getTotalPrice())}</span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border-2 border-green-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                        <span className="text-green-600 font-bold">₱</span>
+                      </div>
+                      <span className="text-lg font-semibold text-gray-900">Total Price:</span>
+                    </div>
+                    <span className="text-3xl font-bold text-green-600">
                       {formatCurrencyPHP(getTotalPrice())}
                     </span>
                   </div>
                 </div>
 
-                {/* Actions: Save Build & Complete Build */}
-                <div className="flex flex-col gap-4">
-                  <button
-                    onClick={() => setShowSaveModal(true)}
-                    className={`flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-lg transition-colors ${
-                      user 
-                        ? 'bg-green-600 text-white shadow-md hover:bg-green-700' 
-                        : 'bg-gray-400 text-white cursor-not-allowed'
-                    }`}
-                    disabled={!user}
-                    title={!user ? 'Please log in to save builds' : ''}
-                  >
-                    <Save className="w-5 h-5" />
-                    {isEditing ? 'Update Build' : 'Save Build'}
-                    {!user && <span className="text-xs ml-2">(Login Required)</span>}
-                  </button>
-                  <button
-                    onClick={handleCompleteBuild}
-                    className={`inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-lg transition-all duration-200 ${
-                      getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
-                        ? getCompatibilityScore() === 100
-                          ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-lg hover:shadow-xl transform hover:scale-105'
-                          : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg hover:shadow-xl'
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    }`}
-                    disabled={getSelectedRequiredComponentsCount() < getRequiredComponentsCount()}
-                  >
-                    {placingOrder ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                        <span>Placing order...</span>
-                      </div>
-                    ) : (
-                      getSelectedRequiredComponentsCount() === getRequiredComponentsCount() 
-                        ? getCompatibilityScore() === 100
-                          ? (
-                            <div className="flex items-center justify-center gap-2">
-                              <ShoppingCart className="w-5 h-5" />
-                              <span>Complete Build!</span>
-                            </div>
-                          )
-                          : (
-                            <div className="flex items-center justify-center gap-2">
-                              <AlertTriangle className="w-5 h-5" />
-                              <span>Complete Build (with warnings)</span>
-                            </div>
-                          )
-                        : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
-                    )}
-                  </button>
-                  <button
-                    onClick={handleClearAllComponents}
-                    className="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-lg bg-red-600 text-white shadow-md hover:bg-red-700 transition-colors"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                    Clear All
-                  </button>
+                {/* Enhanced Action Buttons */}
+                <div className="space-y-4">
+                  {/* Primary Actions */}
+                  <div className="grid grid-cols-1 gap-3">
+                    <button
+                      onClick={() => setShowSaveModal(true)}
+                      className={`flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                        user 
+                          ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg hover:shadow-xl hover:from-green-700 hover:to-green-800 transform hover:scale-105' 
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      }`}
+                      disabled={!user}
+                      title={!user ? 'Please log in to save builds' : ''}
+                    >
+                      <Save className="w-5 h-5" />
+                      {isEditing ? 'Update Build' : 'Save Build'}
+                      {!user && <span className="text-sm ml-2 opacity-75">(Login Required)</span>}
+                    </button>
+                    
+                    <button
+                      onClick={handleCompleteBuild}
+                      className={`flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                        getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
+                          ? getLocalCompatibilityScore() === 100
+                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:from-blue-700 hover:to-purple-700 transform hover:scale-105'
+                            : 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg hover:shadow-xl hover:from-orange-600 hover:to-red-600'
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      }`}
+                      disabled={getSelectedRequiredComponentsCount() < getRequiredComponentsCount()}
+                    >
+                      {placingOrder ? (
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                          <span>Placing order...</span>
+                        </div>
+                      ) : (
+                        getSelectedRequiredComponentsCount() === getRequiredComponentsCount() 
+                          ? getLocalCompatibilityScore() === 100
+                            ? (
+                              <div className="flex items-center justify-center gap-3">
+                                <ShoppingCart className="w-5 h-5" />
+                                <span>Complete Build!</span>
+                              </div>
+                            )
+                            : (
+                              <div className="flex items-center justify-center gap-3">
+                                <AlertTriangle className="w-5 h-5" />
+                                <span>Complete Build (with warnings)</span>
+                              </div>
+                            )
+                          : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
+                      )}
+                    </button>
+                  </div>
+                  
+                  {/* Secondary Actions */}
+                  <div className="pt-2 border-t border-gray-200">
+                    <button
+                      onClick={handleClearAllComponents}
+                      className="w-full flex items-center justify-center gap-3 px-6 py-3 rounded-xl font-semibold text-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all duration-200"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                      Clear All Components
+                    </button>
+                  </div>
                 </div>
                 
                 {getSelectedRequiredComponentsCount() === getRequiredComponentsCount() && (
                   <div className="text-center text-sm mt-4 p-3 rounded-lg">
-                    {getCompatibilityScore() === 100 ? (
+                    {getLocalCompatibilityScore() === 100 ? (
                       <div className="text-green-600 bg-green-50">
                         <p className="font-medium">Ready to proceed with your build!</p>
                         {!selectedComponents.cooler && (
@@ -2193,7 +2434,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                           <span className="text-sm font-medium text-gray-700">Compatibility</span>
                         </div>
                         <span className="text-lg font-bold text-green-600">
-                          {getCompatibilityScore()}%
+                          {getLocalCompatibilityScore()}%
                         </span>
               </div>
 
@@ -2212,7 +2453,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                   </div>
 
                   {/* Compatibility Status */}
-                  {getCompatibilityScore() < 100 && (
+                  {getLocalCompatibilityScore() < 100 && (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <AlertTriangle className="w-5 h-5 text-yellow-600" />
@@ -2344,7 +2585,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Compatibility:</span>
-                    <span className="font-medium text-green-600">{getCompatibilityScore()}%</span>
+                    <span className="font-medium text-green-600">{getLocalCompatibilityScore()}%</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Total Price:</span>

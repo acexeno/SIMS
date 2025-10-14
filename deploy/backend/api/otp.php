@@ -46,6 +46,13 @@ function handleOtpRequest(PDO $pdo) {
         return;
     }
 
+    // Restrict OTP to Gmail addresses only
+    if (!preg_match('/@gmail\.com$/i', $email)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Only Gmail addresses are allowed for OTP.']);
+        return;
+    }
+
     ensureOtpSchema($pdo);
 
     // Rate limiting

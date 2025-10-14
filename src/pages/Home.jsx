@@ -1,7 +1,12 @@
+/**
+ * Home page: storefront landing with prebuilts, FAQ, and feedback modal.
+ * Fetches prebuilts, maps component IDs for assembly, and provides CTA to build.
+ */
 import React, { useState, useEffect } from 'react'
 import { ArrowRight, Star, CheckCircle, Zap, Shield, Users, Award, ChevronDown, ChevronUp, HelpCircle, MessageSquare, Send, X, Cpu, Monitor, MemoryStick } from 'lucide-react'
 import HeroSlideshow from '../components/HeroSlideshow'
 import { API_BASE } from '../utils/apiBase'
+import { formatCurrencyPHP } from '../utils/currency'
 
 const Home = ({ setCurrentPage, setSelectedComponents }) => {
   const [openFaq, setOpenFaq] = useState(null)
@@ -13,7 +18,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
   const [prebuiltPCs, setPrebuiltPCs] = useState([])
   const [loadingPrebuilts, setLoadingPrebuilts] = useState(true)
 
-  // Fetch prebuilts from database
+  // Fetch prebuilts from backend and normalize for display
   useEffect(() => {
     const fetchPrebuilts = async () => {
       try {
@@ -34,7 +39,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     fetchPrebuilts()
   }, [])
 
-  // Canonical key mapping for component categories
+  // Canonical key mapping for component categories (handles aliasing from DB)
   const KEY_MAP = {
     cpu: ['cpu', 'processor', 'procie', 'procie only', 'processor only'],
     motherboard: ['motherboard', 'mobo'],
@@ -46,7 +51,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     cooler: ['cooler', 'coolers', 'aio', 'cooling', 'cpu cooler', 'water cooling', 'liquid cooler', 'fan', 'heatsink']
   };
 
-  // Helper to fetch full component objects by IDs
+  // Fetch full component objects by IDs to hydrate assembly view
   async function fetchComponentsByIds(componentIds) {
     if (!componentIds || typeof componentIds !== 'object') return {};
     // Accept numeric strings and numbers
@@ -70,7 +75,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     return {};
   }
 
-  // Fetch cheapest component for a given canonical category key (for fallbacks)
+  // Fallback: fetch a cheapest component per category to backfill incomplete prebuilts
   async function fetchCheapestForCategory(canonKey) {
     const map = {
       cpu: 'CPU',
@@ -97,6 +102,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
     }
   }
 
+  // On prebuilt select: hydrate components and navigate to assembly
   const handlePrebuiltSelect = async (pc) => {
     try {
       // Parse component_ids from JSON string if it's a string
@@ -370,7 +376,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                   <div className="mb-4">
                     <div className="flex items-center gap-2">
                       <span className="text-3xl font-bold text-green-600">
-                        ₱{parseFloat(pc.price).toLocaleString()}
+                        {formatCurrencyPHP(pc.price, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </span>
                     </div>
                   </div>
@@ -616,9 +622,25 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
               Get Started Now
               <ArrowRight className="w-5 h-5" />
             </button>
+            <button
+              onClick={() => setCurrentPage('prebuilt-pcs')}
+              className="bg-transparent border border-white text-white px-6 lg:px-8 py-3 lg:py-4 rounded-lg font-semibold text-base lg:text-lg hover:bg-white hover:text-green-600 transition-colors flex items-center gap-3"
+            >
+              View Prebuilts
+              <ArrowRight className="w-5 h-5" />
+            </button>
           </div>
         </div>
       </section>
+
+      {/* Floating Chat Support Button */}
+      <button
+        onClick={() => setCurrentPage('chat-support')}
+        aria-label="Open chat support"
+        className="fixed bottom-6 right-6 bg-green-600 text-white rounded-full shadow-lg hover:bg-green-700 transition-colors p-4 z-40 flex items-center justify-center"
+      >
+        <MessageSquare className="w-6 h-6" />
+      </button>
 
       {/* Feedback Modal */}
       {showFeedbackModal && (
@@ -832,7 +854,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
               <div className="space-y-2 text-gray-300">
                 <p>Email: support@builditpc.com</p>
                 <p>Phone: +63 912 345 6789</p>
-                <p>Address: Manila, Philippines</p>
+                <p>Address: Ground flr JSP Bldg. 9109 National rd. Cay Pombo, Santa Maria, Philippines</p>
               </div>
             </div>
           </div>

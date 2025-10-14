@@ -7,6 +7,11 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
 require_once __DIR__ . '/auth.php'; // Include auth functions for getBearerToken
 
+// Ensure a database connection is available whether routed via index.php or direct access
+if (!isset($pdo) || !$pdo) {
+    $pdo = get_db_connection();
+}
+
 // Only execute routing logic if this file is called directly
 if (basename($_SERVER['SCRIPT_NAME']) === 'builds.php') {
     // Get the request method
@@ -53,10 +58,24 @@ if (basename($_SERVER['SCRIPT_NAME']) === 'builds.php') {
 }
 
 function handleCreateBuild($pdo) {
-    // Get JSON input
-    $input = json_decode(file_get_contents('php://input'), true);
+    // Robust body parsing (JSON or form-encoded)
+    $raw = file_get_contents('php://input');
+    $input = [];
+    if (is_string($raw) && $raw !== '') {
+        $json = json_decode($raw, true);
+        if (is_array($json)) {
+            $input = $json;
+        } else {
+            $tmp = [];
+            parse_str($raw, $tmp);
+            if (is_array($tmp) && !empty($tmp)) $input = $tmp;
+        }
+    }
+    if (empty($input) && !empty($_POST)) {
+        $input = $_POST;
+    }
     
-    if (!$input) {
+    if (!$input || !is_array($input)) {
         http_response_code(400);
         echo json_encode(['error' => 'Invalid JSON input']);
         return;
@@ -387,4 +406,3 @@ function getUserIdFromToken() {
         return null;
     }
 }
-?> 

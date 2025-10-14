@@ -1,19 +1,27 @@
 <?php
-// JWT Helper for SIMS Authentication
-// Note: In production, use a proper JWT library like firebase/php-jwt
+/**
+ * Lightweight JWT utilities for SIMS.
+ * Caution: In production, prefer a vetted library such as firebase/php-jwt.
+ */
 
 // Load environment helper (safe if included multiple times)
 require_once __DIR__ . '/../config/env.php';
 
-// JWT configuration with environment overrides
+// JWT configuration (overridable via environment)
 define('JWT_SECRET', env('JWT_SECRET', 'builditpc_secret_key_2024_change_in_production'));
 define('JWT_ALGORITHM', 'HS256');
-define('JWT_EXPIRY', (int) env('JWT_EXPIRY', '3600')); // default 1 hour
+define('JWT_EXPIRY', (int) env('JWT_EXPIRY', '7200')); // default 2 hours (increased from 1 hour for better UX)
 // Refresh token configuration
 define('REFRESH_JWT_SECRET', env('REFRESH_JWT_SECRET', JWT_SECRET));
 define('REFRESH_JWT_EXPIRY', (int) env('REFRESH_JWT_EXPIRY', '1209600')); // default 14 days
 
-// Generate JWT Token
+/**
+ * Generate short-lived access token.
+ * @param int $userId
+ * @param string $username
+ * @param array|string $roles
+ * @return string JWT string
+ */
 function generateJWT($userId, $username, $roles) {
     $header = json_encode([
         'typ' => 'JWT',
@@ -38,7 +46,11 @@ function generateJWT($userId, $username, $roles) {
     return $base64Header . "." . $base64Payload . "." . $base64Signature;
 }
 
-// Verify JWT Token
+/**
+ * Verify access token signature and expiry.
+ * @param string $token
+ * @return array|false Decoded payload on success, false on failure
+ */
 function verifyJWT($token) {
     $parts = explode('.', $token);
     if (count($parts) !== 3) {
@@ -69,7 +81,9 @@ function verifyJWT($token) {
     return $payloadData;
 }
 
-// Generate Refresh JWT Token
+/**
+ * Generate refresh token (longer-lived, distinct secret).
+ */
 function generateRefreshJWT($userId, $username, $roles) {
     $header = json_encode([
         'typ' => 'JWT',
@@ -94,7 +108,9 @@ function generateRefreshJWT($userId, $username, $roles) {
     return $base64Header . "." . $base64Payload . "." . $base64Signature;
 }
 
-// Verify Refresh JWT Token
+/**
+ * Verify refresh token signature, type, and expiry.
+ */
 function verifyRefreshJWT($token) {
     $parts = explode('.', $token);
     if (count($parts) !== 3) {
@@ -128,12 +144,11 @@ function verifyRefreshJWT($token) {
     return $payloadData;
 }
 
-// Base64URL encoding
+// Base64URL encoding/decoding helpers
 function base64url_encode($data) {
     return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
 }
 
-// Base64URL decoding
 function base64url_decode($data) {
     // Convert URL-safe alphabet back to standard Base64
     $b64 = strtr($data, '-_', '+/');
@@ -145,7 +160,7 @@ function base64url_decode($data) {
     return base64_decode($b64);
 }
 
-// Check if user has specific role
+/** Role helpers: normalize lists and check memberships */
 function hasRole($userRoles, $requiredRole) {
     if (is_string($userRoles)) {
         $userRoles = explode(',', $userRoles);
@@ -153,7 +168,6 @@ function hasRole($userRoles, $requiredRole) {
     return in_array($requiredRole, $userRoles);
 }
 
-// Check if user has any of the required roles
 function hasAnyRole($userRoles, $requiredRoles) {
     if (is_string($userRoles)) {
         $userRoles = explode(',', $userRoles);
@@ -164,7 +178,6 @@ function hasAnyRole($userRoles, $requiredRoles) {
     return !empty(array_intersect($userRoles, $requiredRoles));
 }
 
-// Check if user has all required roles
 function hasAllRoles($userRoles, $requiredRoles) {
     if (is_string($userRoles)) {
         $userRoles = explode(',', $userRoles);
@@ -175,7 +188,9 @@ function hasAllRoles($userRoles, $requiredRoles) {
     return empty(array_diff($requiredRoles, $userRoles));
 }
 
-// Get user permissions based on roles
+/**
+ * Map roles to coarse permissions used by the app.
+ */
 function getUserPermissions($userRoles) {
     $permissions = [];
     
@@ -231,7 +246,9 @@ function getUserPermissions($userRoles) {
     return $permissions;
 }
 
-// Check if user has specific permission
+/**
+ * Check if user has a named permission, optionally with specific action.
+ */
 function hasPermission($userRoles, $permission, $action = null) {
     $permissions = getUserPermissions($userRoles);
     

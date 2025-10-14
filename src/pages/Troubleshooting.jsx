@@ -6,12 +6,12 @@ const Troubleshooting = ({ setCurrentPage }) => {
   const [selectedCategory, setSelectedCategory] = useState('all');
 
   const categories = [
-    { id: 'all', name: 'All Issues', icon: '🔧' },
-    { id: 'compatibility', name: 'Compatibility', icon: '⚠️' },
-    { id: 'performance', name: 'Performance', icon: '⚡' },
-    { id: 'hardware', name: 'Hardware', icon: '💻' },
-    { id: 'software', name: 'Software', icon: '💾' },
-    { id: 'build', name: 'Build Process', icon: '🔨' }
+    { id: 'all', name: 'All Issues', icon: null },
+    { id: 'compatibility', name: 'Compatibility', icon: null },
+    { id: 'performance', name: 'Performance', icon: null },
+    { id: 'hardware', name: 'Hardware', icon: null },
+    { id: 'software', name: 'Software', icon: null },
+    { id: 'build', name: 'Build Process', icon: null }
   ];
 
   const troubleshootingIssues = [
@@ -285,7 +285,7 @@ const Troubleshooting = ({ setCurrentPage }) => {
                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                 }`}
               >
-                <span className="mr-2">{category.icon}</span>
+                {category.icon && <span className="mr-2">{category.icon}</span>}
                 {category.name}
               </button>
             ))}

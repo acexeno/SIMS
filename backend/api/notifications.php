@@ -1,23 +1,70 @@
 <?php
 // Notifications API endpoints for SIMS
 
-// Local helper: safely extract user_id from JWT in either Authorization header or query string
+// Local helper: safely extract user_id from JWT from multiple sources
 function getUserIdFromRequest() {
-    // Prefer the common helper if available
+    // Use the centralized getBearerToken function which handles all token sources
+    $token = null;
     if (function_exists('getBearerToken')) {
         $token = getBearerToken();
-    } else {
-        $token = null;
     }
-    if (!$token && isset($_GET['token']) && $_GET['token']) {
-        $token = $_GET['token'];
+    
+    // Additional fallback for query parameter (commonly used by frontend retry logic)
+    if (!$token && isset($_GET['token']) && !empty($_GET['token'])) {
+        $token = trim($_GET['token']);
     }
-    if (!$token) return null;
+
+    if (!$token) {
+        error_log("getUserIdFromRequest: No token found in request");
+        return null;
+    }
+    
+    // DEBUG: Log token source and first few characters for debugging
+    $tokenSource = 'unknown';
+    if (isset($_GET['token']) && !empty($_GET['token'])) {
+        $tokenSource = 'query_param';
+    } elseif (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+        $tokenSource = 'auth_header';
+    } elseif (isset($_SERVER['HTTP_X_AUTH_TOKEN'])) {
+        $tokenSource = 'x_auth_header';
+    }
+    error_log("getUserIdFromRequest: Token from $tokenSource: " . substr($token, 0, 20) . "...");
+    
     try {
         $decoded = verifyJWT($token);
-        if (!$decoded) return null;
-        return $decoded['user_id'] ?? null;
+        if (!$decoded) {
+            error_log("getUserIdFromRequest: Token verification failed for token: " . substr($token, 0, 20) . "...");
+            return null;
+        }
+        
+        $userId = $decoded['user_id'] ?? null;
+        if (!$userId) {
+            error_log("getUserIdFromRequest: No user_id in decoded token");
+            return null;
+        }
+        
+        // Additional validation: ensure user exists and is active
+        global $pdo;
+        if ($pdo) {
+            $stmt = $pdo->prepare("SELECT id, is_active FROM users WHERE id = ?");
+            $stmt->execute([$userId]);
+            $user = $stmt->fetch();
+            
+            if (!$user) {
+                error_log("getUserIdFromRequest: User not found in database: $userId");
+                return null;
+            }
+            
+            if (!$user['is_active']) {
+                error_log("getUserIdFromRequest: User account is deactivated: $userId");
+                return null;
+            }
+        }
+        
+        error_log("getUserIdFromRequest: Successfully authenticated user $userId");
+        return $userId;
     } catch (Throwable $t) {
+        error_log("getUserIdFromRequest: Exception during token verification: " . $t->getMessage());
         return null;
     }
 }
@@ -118,7 +165,7 @@ function handleGetNotifications($pdo) {
     $userId = getUserIdFromRequest();
     if (!$userId) {
         http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Unauthorized']);
+        echo json_encode(['success' => false, 'error' => 'Unauthorized', 'message' => 'Invalid or missing authentication token']);
         return;
     }
 
@@ -331,4 +378,3 @@ function handleCreateNotification($pdo) {
         echo json_encode(['success' => false, 'error' => 'Failed to create notification']);
     }
 }
-?> 
