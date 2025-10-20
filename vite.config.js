@@ -3,9 +3,14 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  // Use relative base so dist/index.html works under any subpath (e.g., /capstone2/dist/)
+  // Use relative base so built assets work under subpaths (e.g., /capstone2/backend/public)
   base: './',
   plugins: [react()],
+  build: {
+    outDir: 'backend/public',
+    emptyOutDir: false,
+    assetsDir: 'assets',
+  },
   server: {
     port: 5175,
     proxy: {

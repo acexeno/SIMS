@@ -191,6 +191,7 @@ function handleCreateComponent($pdo) {
     $brand = isset($input['brand']) ? trim($input['brand']) : null;
     $price = isset($input['price']) ? (float)$input['price'] : 0.0;
     $stock_quantity = isset($input['stock_quantity']) ? (int)$input['stock_quantity'] : 0;
+    $image_url = isset($input['image_url']) ? trim($input['image_url']) : null;
 
     if ($name === '' || $category_id <= 0) {
         http_response_code(400);
@@ -198,8 +199,8 @@ function handleCreateComponent($pdo) {
         return;
     }
 
-    $stmt = $pdo->prepare("INSERT INTO components (name, category_id, brand, price, stock_quantity) VALUES (?, ?, ?, ?, ?)");
-    $stmt->execute([$name, $category_id, $brand, $price, $stock_quantity]);
+    $stmt = $pdo->prepare("INSERT INTO components (name, category_id, brand, price, stock_quantity, image_url) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$name, $category_id, $brand, $price, $stock_quantity, $image_url]);
 
     $id = (int)$pdo->lastInsertId();
     // Return created component data
@@ -222,7 +223,7 @@ function handleUpdateComponent($pdo) {
 
     $fields = [];
     $values = [];
-    $allowed = ['name', 'category_id', 'brand', 'price', 'stock_quantity'];
+    $allowed = ['name', 'category_id', 'brand', 'price', 'stock_quantity', 'image_url'];
     foreach ($allowed as $f) {
         if (array_key_exists($f, $input)) {
             $fields[] = "$f = ?";
@@ -539,6 +540,41 @@ switch ($endpoint) {
     case 'get_users':
         if ($method === 'GET') {
             handleGetUsers($pdo);
+        } else {
+            http_response_code(405);
+            echo json_encode(['error' => 'Method Not Allowed']);
+        }
+        break;
+
+    case 'assign_role':
+        if ($method === 'POST') {
+            // Minimal secure handler inline to avoid another include
+            $headers = function_exists('getallheaders') ? getallheaders() : [];
+            $authHeader = $headers['Authorization'] ?? ($headers['authorization'] ?? null);
+            if (!$authHeader) { http_response_code(401); echo json_encode(['success'=>false,'error'=>'Unauthorized']); break; }
+            $token = preg_replace('/^Bearer\s+/i','',$authHeader);
+            $decoded = verifyJWT($token);
+            if (!$decoded) { http_response_code(401); echo json_encode(['success'=>false,'error'=>'Invalid token']); break; }
+            $roles = $decoded['roles'] ?? [];
+            if (is_string($roles)) $roles = explode(',', $roles);
+            if (!in_array('Super Admin', $roles)) { http_response_code(403); echo json_encode(['success'=>false,'error'=>'Forbidden']); break; }
+            $input = json_decode(file_get_contents('php://input'), true) ?: [];
+            $userId = isset($input['user_id']) ? (int)$input['user_id'] : 0;
+            $roleName = trim((string)($input['role'] ?? ''));
+            if ($userId <= 0 || $roleName === '') { http_response_code(400); echo json_encode(['success'=>false,'error'=>'Invalid input']); break; }
+            // Find role id
+            $stmt = $pdo->prepare('SELECT id FROM roles WHERE name = ?');
+            $stmt->execute([$roleName]);
+            $r = $stmt->fetch();
+            if (!$r) { http_response_code(404); echo json_encode(['success'=>false,'error'=>'Role not found']); break; }
+            // Upsert mapping (avoid duplicates)
+            $exists = $pdo->prepare('SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ?');
+            $exists->execute([$userId, $r['id']]);
+            if (!$exists->fetch()) {
+                $ins = $pdo->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
+                $ins->execute([$userId, $r['id']]);
+            }
+            echo json_encode(['success'=>true]);
         } else {
             http_response_code(405);
             echo json_encode(['error' => 'Method Not Allowed']);

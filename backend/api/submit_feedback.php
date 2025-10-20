@@ -33,8 +33,8 @@ foreach ($required_fields as $field) {
 // Sanitize input data
 $name = htmlspecialchars(trim($input['name']), ENT_QUOTES, 'UTF-8');
 $email = filter_var(trim($input['email']), FILTER_SANITIZE_EMAIL);
-$subject = htmlspecialchars(trim($input['subject']), ENT_QUOTES, 'UTF-8');
-$message = htmlspecialchars(trim($input['message']), ENT_QUOTES, 'UTF-8');
+$subject = htmlspecialchars(strtoupper(trim($input['subject'])), ENT_QUOTES, 'UTF-8');
+$message = htmlspecialchars(strtoupper(trim($input['message'])), ENT_QUOTES, 'UTF-8');
 $rating = isset($input['rating']) ? intval($input['rating']) : 0;
 
 // Validate email

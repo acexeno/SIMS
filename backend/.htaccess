@@ -1,4 +1,21 @@
 <IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Block direct access to backend internals
+RewriteRule ^(config|database|migrations|utils|tools|scripts|logs)/ - [F,L,NC]
+
+# Route API requests to central router if file/folder does not exist
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^api(?:/.*)?$ api/index.php [QSA,L]
+</IfModule>
+
+# Block environment and hidden files
+<FilesMatch "^\.(env|git|htaccess)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
     RewriteEngine On
 </IfModule>
 
@@ -6,4 +23,4 @@
 SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
 
 RewriteCond %{HTTP:Authorization} ^(.*)
-RewriteRule ^(.*)$ - [E=HTTP_AUTHORIZATION:%1] 
+RewriteRule ^(.*)$ - [E=HTTP_AUTHORIZATION:%1]

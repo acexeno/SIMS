@@ -302,12 +302,20 @@ const PrebuiltPCs = ({ setCurrentPage, setSelectedComponents, onPrebuiltSelect, 
         if (KEY_MAP[k]) canon[k] = componentsForEdit[k];
       });
 
-      // Do not auto-fill missing components. Enforce that prebuilts must be complete.
+      // If original prebuilt indicated cooler but it's missing, auto-fill a basic cooler
+      const originalKeySet = Object.keys(componentIds || {}).map(k => String(k).toLowerCase());
+      const intendedCooler = (KEY_MAP.cooler || []).some(alias => originalKeySet.includes(alias));
+      if (intendedCooler && !canon.cooler) {
+        const fallbackCooler = await fetchCheapestForCategory('cooler');
+        if (fallbackCooler) canon.cooler = fallbackCooler;
+      }
+
+      // Ensure required categories exist; backfill with cheapest sensible options
       const required = ['cpu','motherboard','gpu','ram','storage','psu','case'];
       const missing = required.filter(k => !canon[k]);
       if (missing.length > 0) {
-        alert('This prebuilt is incomplete and cannot be loaded. Missing: ' + missing.join(', '));
-        return;
+        const results = await Promise.all(missing.map(k => fetchCheapestForCategory(k)));
+        results.forEach((comp, idx) => { if (comp) canon[missing[idx]] = comp; });
       }
 
       // Persist to localStorage for consistency with other flows

@@ -484,7 +484,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
     <div className="page-container space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="page-title">Prebuilt PC Management</h2>
+        <h2 className="page-title">Prebuilt PC</h2>
         {isAdminOrSuper && (
           <div className="flex gap-2">
             <button

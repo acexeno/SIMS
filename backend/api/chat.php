@@ -19,8 +19,12 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/cors.php';
 require_once __DIR__ . '/../utils/jwt_helper.php';
 
-// Development log helper: rotate externally if needed for production
+// Development log helper: only logs when APP_DEBUG is enabled
 function logMessage($message) {
+    $appDebug = env('APP_DEBUG', '0');
+    if (!($appDebug === '1' || strtolower($appDebug) === 'true')) {
+        return; // Do not log in production
+    }
     $logFile = __DIR__ . '/chat_debug.log';
     $timestamp = date('Y-m-d H:i:s');
     file_put_contents($logFile, "[$timestamp] $message\n", FILE_APPEND);

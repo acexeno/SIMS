@@ -68,8 +68,29 @@ function handleRegister($pdo) {
     }
     
     // Require OTP previously issued with purpose='register'; blocks scripted signups
+    // Super Admin override: allow 'ADMIN_OVERRIDE' when caller is Super Admin
     $otpCode = isset($input['otp_code']) ? trim((string)$input['otp_code']) : '';
-    if ($otpCode === '') {
+    $isAdminOverride = false;
+    if ($otpCode === 'ADMIN_OVERRIDE') {
+        // Verify caller is Super Admin via bearer token
+        $token = getBearerToken();
+        if ($token) {
+            $payload = verifyJWT($token);
+            if ($payload) {
+                $roles = $payload['roles'] ?? [];
+                if (is_string($roles)) $roles = explode(',', $roles);
+                if (in_array('Super Admin', $roles)) {
+                    $isAdminOverride = true;
+                }
+            }
+        }
+        if (!$isAdminOverride) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Forbidden: admin override not allowed']);
+            return;
+        }
+    }
+    if ($otpCode === '' && !$isAdminOverride) {
         http_response_code(400);
         echo json_encode(['error' => 'Verification code is required']);
         return;
@@ -80,31 +101,33 @@ function handleRegister($pdo) {
         try { ensureOtpSchema($pdo); } catch (Throwable $t) { /* ignore */ }
     }
 
-    try {
-        $stmt = $pdo->prepare("SELECT id, code, expires_at, consumed_at FROM otp_codes
-                               WHERE email = ? AND purpose = 'register' AND consumed_at IS NULL AND expires_at >= NOW()
-                               ORDER BY id DESC LIMIT 1");
-        $stmt->execute([$input['email']]);
-        $row = $stmt->fetch();
+    if (!$isAdminOverride) {
+        try {
+            $stmt = $pdo->prepare("SELECT id, code, expires_at, consumed_at FROM otp_codes
+                                   WHERE email = ? AND purpose = 'register' AND consumed_at IS NULL AND expires_at >= NOW()
+                                   ORDER BY id DESC LIMIT 1");
+            $stmt->execute([$input['email']]);
+            $row = $stmt->fetch();
 
-        if (!$row || !hash_equals($row['code'], $otpCode)) {
-            // Increment attempt count for telemetry; do not leak validity details
-            try {
-                $inc = $pdo->prepare("UPDATE otp_codes SET attempt_count = attempt_count + 1, last_attempt_at = NOW() WHERE email = ? AND purpose = 'register' ORDER BY id DESC LIMIT 1");
-                $inc->execute([$input['email']]);
-            } catch (Throwable $t) { /* ignore */ }
-            http_response_code(400);
-            echo json_encode(['error' => 'Invalid or expired verification code']);
+            if (!$row || !hash_equals($row['code'], $otpCode)) {
+                // Increment attempt count for telemetry; do not leak validity details
+                try {
+                    $inc = $pdo->prepare("UPDATE otp_codes SET attempt_count = attempt_count + 1, last_attempt_at = NOW() WHERE email = ? AND purpose = 'register' ORDER BY id DESC LIMIT 1");
+                    $inc->execute([$input['email']]);
+                } catch (Throwable $t) { /* ignore */ }
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid or expired verification code']);
+                return;
+            }
+
+            // Mark the OTP as consumed now to prevent reuse
+            $upd = $pdo->prepare("UPDATE otp_codes SET consumed_at = NOW() WHERE id = ?");
+            $upd->execute([$row['id']]);
+        } catch (Throwable $t) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to verify verification code']);
             return;
         }
-
-        // Mark the OTP as consumed now to prevent reuse
-        $upd = $pdo->prepare("UPDATE otp_codes SET consumed_at = NOW() WHERE id = ?");
-        $upd->execute([$row['id']]);
-    } catch (Throwable $t) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Failed to verify verification code']);
-        return;
     }
 
     // Block duplicate username or email

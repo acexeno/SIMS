@@ -90,6 +90,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const { unreadCount, notifications, markAsRead } = useNotifications();
   const [showToast, setShowToast] = useState(true);
   const [initialInventoryAccess, setInitialInventoryAccess] = useState(user?.can_access_inventory);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
 
 
 
@@ -380,7 +381,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const InventoryTab = () => (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="page-title">Inventory Management</h2>
+        <h2 className="page-title">Inventory</h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600">Branch:</span>
           <div className="inline-flex rounded-lg border overflow-hidden">
@@ -479,7 +480,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
             {(filtered && filtered.length > 0) ? filtered.map((item) => {
               const cat = categories.find(c => String(c.id) === String(item.category_id));
               const displayCat = cat ? (formalCategoryNames[cat.name] || cat.name) : item.category_id;
-              const imgSrc = getComponentImage(item.name);
+              const imgSrc = item.image_url || getComponentImage(item.name);
               return (
                 <tr key={item.id}>
                   <td className="w-20 px-4 py-4 whitespace-nowrap align-middle">
@@ -627,7 +628,10 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h2 className="page-title">Orders Management</h2>
-        <button className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg">
+        <button
+          className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg"
+          onClick={() => setOrderModalOpen(true)}
+        >
           <Plus className="h-4 w-4" />
           Add Order
         </button>
@@ -673,6 +677,25 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
           </tbody>
         </table>
       </div>
+      {orderModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setOrderModalOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-lg p-6 max-w-xl w-full relative" onClick={e => e.stopPropagation()}>
+            <button className="absolute top-4 right-4 text-gray-500 hover:text-gray-800" onClick={() => setOrderModalOpen(false)}>×</button>
+            <h3 className="text-xl font-bold mb-4">Create Order</h3>
+            <CreateOrderForm
+              user={user}
+              inventory={inventory}
+              onCancel={() => setOrderModalOpen(false)}
+              onCreated={() => {
+                setOrderModalOpen(false)
+                authorizedFetch(`${API_BASE}/index.php?endpoint=orders`).then(r => r.json()).then(d => {
+                  if (d && d.success) setOrders(d.data || [])
+                }).catch(() => {})
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -869,6 +892,99 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
 
 export default EmployeeDashboard 
 
+// Minimal CreateOrderForm (re-used from Admin dashboard shape)
+function CreateOrderForm({ user, inventory = [], onCancel = () => {}, onCreated = () => {} }) {
+  const [items, setItems] = React.useState([])
+  const [status, setStatus] = React.useState('Completed')
+  const [creating, setCreating] = React.useState(false)
+  const [notes, setNotes] = React.useState('')
+
+  const addLine = () => setItems(prev => [...prev, { component_id: '', quantity: 1 }])
+  const updateLine = (idx, patch) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it))
+  const removeLine = (idx) => setItems(prev => prev.filter((_, i) => i !== idx))
+
+  React.useEffect(() => {
+    if (items.length === 0) addLine()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!Array.isArray(items) || items.length === 0) return
+    const normalized = items
+      .filter(it => it.component_id && Number(it.quantity) > 0)
+      .map(it => ({ component_id: Number(it.component_id), quantity: Number(it.quantity) }))
+    if (normalized.length === 0) return
+    setCreating(true)
+    try {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: normalized, status, notes: notes ? String(notes).toUpperCase() : undefined })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to create order')
+      } else {
+        onCreated(data.order_id)
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Network error creating order')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        {items.map((it, idx) => (
+          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+            <select
+              className="col-span-7 border rounded px-3 py-2"
+              value={it.component_id}
+              onChange={e => updateLine(idx, { component_id: e.target.value })}
+            >
+              <option value="">Select Component</option>
+              {inventory.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={1}
+              className="col-span-3 border rounded px-3 py-2"
+              value={it.quantity}
+              onChange={e => updateLine(idx, { quantity: e.target.value })}
+            />
+            <button type="button" className="col-span-2 text-red-600" onClick={() => removeLine(idx)}>Remove</button>
+          </div>
+        ))}
+        <button type="button" className="text-blue-600" onClick={addLine}>+ Add Item</button>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Status</label>
+          <select className="mt-1 border rounded px-3 py-2 w-full" value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="Pending">Pending</option>
+            <option value="Processing">Processing</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Notes (COMMENTS)</label>
+          <input className="mt-1 border rounded px-3 py-2 w-full" value={notes} onChange={e => setNotes(e.target.value)} placeholder="OPTIONAL" />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded">Cancel</button>
+        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded" disabled={creating}>{creating ? 'Creating...' : 'Create Order'}</button>
+      </div>
+    </form>
+  )
+}
 // Small reusable form component used by dashboards for creating/updating components
 function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = () => {} }) {
   const [form, setForm] = React.useState({
@@ -877,11 +993,14 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     brand: item.brand || '',
     price: item.price || 0,
     stock_quantity: item.stock_quantity ?? item.stock ?? 0,
-    category_id: item.category_id || (categories[0] && categories[0].id) || ''
+    category_id: item.category_id || (categories[0] && categories[0].id) || '',
+    image_url: item.image_url || ''
   });
   const [saving, setSaving] = React.useState(false);
   const [branchStocks, setBranchStocks] = React.useState({ BULACAN: '', MARIKINA: '' });
   const [loadingBranch, setLoadingBranch] = React.useState(false);
+  const fileInputRef = React.useRef(null);
+  const [imageMeta, setImageMeta] = React.useState(null);
 
   const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
@@ -941,6 +1060,49 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
       <div>
         <label className="block text-sm font-medium text-gray-700">Brand</label>
         <input value={form.brand} onChange={e => handleChange('brand', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Image</label>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Image URL (optional)"
+            value={form.image_url}
+            onChange={e => handleChange('image_url', e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2"
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={async (e) => {
+              const file = e.target.files && e.target.files[0];
+              if (!file) return;
+              const url = URL.createObjectURL(file);
+              handleChange('image_url', url);
+              try {
+                const img = new Image();
+                img.onload = () => {
+                  setImageMeta({ sizeBytes: file.size, width: img.naturalWidth, height: img.naturalHeight });
+                };
+                img.src = url;
+              } catch {}
+            }}
+            className="mt-1"
+          />
+        </div>
+        <div className="mt-2">
+          {form.image_url ? (
+            <div className="flex items-center gap-3">
+              <img src={form.image_url} alt="Preview" className="w-20 h-20 object-contain border rounded" onError={e => { e.currentTarget.style.display = 'none'; }} />
+              {imageMeta && (
+                <span className="text-xs text-gray-600">{imageMeta.width}×{imageMeta.height} px, {(imageMeta.sizeBytes / 1024).toFixed(1)} KB</span>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-gray-500">Optional: provide a URL or pick a file</span>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>

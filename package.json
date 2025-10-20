@@ -8,7 +8,8 @@
     "dev": "vite --port 5175",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "vite --port 5174"
+    "start": "vite --port 5174",
+    "build:prod": "cross-env NODE_ENV=production vite build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.85.5",

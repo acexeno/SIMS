@@ -1281,18 +1281,20 @@ const checkCPURAMCompatibility = (cpu, ram) => {
   const issues = [];
   const details = { cpuSocket, ramType, ramSpeed };
   
-  // Check CPU-RAM type compatibility
+  // Check CPU-RAM type compatibility (normalize CPU socket and RAM type labels)
   if (cpuSocket && ramType) {
-    const supportedRamTypes = COMPATIBILITY_RULES.cpu_ram_compatibility[cpuSocket];
-    if (supportedRamTypes && !supportedRamTypes.includes(ramType)) {
-      issues.push(`CPU socket ${cpuSocket} does not support ${ramType} RAM`);
+    const nsCpu = normalizeSocket(cpuSocket);
+    const normRamType = String(ramType).toUpperCase().includes('DDR5') ? 'DDR5' : String(ramType).toUpperCase().includes('DDR3') ? 'DDR3' : 'DDR4';
+    const supportedRamTypes = COMPATIBILITY_RULES.cpu_ram_compatibility[nsCpu];
+    if (supportedRamTypes && !supportedRamTypes.includes(normRamType)) {
+      issues.push(`CPU socket ${nsCpu} does not support ${normRamType} RAM`);
     }
   }
   
   // Check RAM speed compatibility with CPU
   if (ramSpeed && cpuSocket) {
     const ramSpeedNum = parseInt(ramSpeed);
-    const ramTypeForSpeed = ramType || 'DDR4'; // Default to DDR4 if not specified
+    const ramTypeForSpeed = (String(ramType || '').toUpperCase().includes('DDR5') ? 'DDR5' : (String(ramType || '').toUpperCase().includes('DDR3') ? 'DDR3' : 'DDR4'));
     
     if (COMPATIBILITY_RULES.ram_speeds[ramTypeForSpeed]) {
       const speedRules = COMPATIBILITY_RULES.ram_speeds[ramTypeForSpeed];

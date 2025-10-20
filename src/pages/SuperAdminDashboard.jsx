@@ -67,9 +67,12 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
     brand: item.brand || '',
     price: item.price || 0,
     stock_quantity: item.stock_quantity ?? item.stock ?? 0,
-    category_id: item.category_id || (categories[0] && categories[0].id) || ''
+    category_id: item.category_id || (categories[0] && categories[0].id) || '',
+    image_url: item.image_url || ''
   });
   const [saving, setSaving] = React.useState(false);
+  const fileInputRef = React.useRef(null);
+  const [imageMeta, setImageMeta] = React.useState(null); // { sizeBytes, width, height }
 
   const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
@@ -106,6 +109,52 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
       <div>
         <label className="block text-sm font-medium text-gray-700">Brand</label>
         <input value={form.brand} onChange={e => handleChange('brand', e.target.value)} className="mt-1 block w-full border rounded px-3 py-2" />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Image</label>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Image URL (optional)"
+            value={form.image_url}
+            onChange={e => handleChange('image_url', e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2"
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={async (e) => {
+              const file = e.target.files && e.target.files[0];
+              if (!file) return;
+              // For now, store a temporary object URL; production can swap to real upload endpoint
+              const url = URL.createObjectURL(file);
+              handleChange('image_url', url);
+              try {
+                const img = new Image();
+                img.onload = () => {
+                  setImageMeta({ sizeBytes: file.size, width: img.naturalWidth, height: img.naturalHeight });
+                };
+                img.src = url;
+              } catch {}
+            }}
+            className="mt-1"
+          />
+        </div>
+        <div className="mt-2">
+          {form.image_url ? (
+            <div className="flex items-center gap-3">
+              <img src={form.image_url} alt="Preview" className="w-20 h-20 object-contain border rounded" onError={e => { e.currentTarget.style.display = 'none'; }} />
+              {imageMeta && (
+                <span className="text-xs text-gray-600">
+                  {imageMeta.width}×{imageMeta.height} px, {(imageMeta.sizeBytes / 1024).toFixed(1)} KB
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-gray-500">Optional: provide a URL or pick a file</span>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -228,8 +277,8 @@ const InventoryManagement = ({ inventory, categories, user }) => {
   return (
     <div className="page-container space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Inventory Management</h2>
-        <button className="btn btn-primary shadow">
+        <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Inventory</h2>
+        <button className="btn btn-primary shadow" onClick={() => setEditItem({})}>
           <Plus className="h-4 w-4" />
           Add Product
         </button>
@@ -294,7 +343,7 @@ const InventoryManagement = ({ inventory, categories, user }) => {
           </thead>
           <tbody>
             {filtered.length > 0 ? filtered.map((item) => {
-              const imgSrc = getComponentImage(item.name);
+              const imgSrc = item.image_url || getComponentImage(item.name);
               return (
                 <tr key={item.id}>
                   <td className="text-sm font-medium text-gray-900 break-words max-w-xs flex items-center gap-3" style={{ maxWidth: '320px' }} title={item.name}>
@@ -435,11 +484,13 @@ const InventoryManagement = ({ inventory, categories, user }) => {
   );
 };
 
-const OrdersManagement = ({ orders }) => (
+const OrdersManagement = ({ orders, inventory, onRefetch }) => {
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  return (
   <div className="page-container space-y-6">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Orders Management</h2>
-      <button className="btn btn-primary shadow">
+      <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Orders</h2>
+      <button className="btn btn-primary shadow" onClick={() => setOrderModalOpen(true)}>
         <Plus className="h-4 w-4" />
         Add Order
       </button>
@@ -486,8 +537,22 @@ const OrdersManagement = ({ orders }) => (
         </tbody>
       </table>
     </div>
+    {orderModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setOrderModalOpen(false)}>
+        <div className="bg-white rounded-2xl shadow-lg p-6 max-w-xl w-full relative" onClick={e => e.stopPropagation()}>
+          <button className="absolute top-4 right-4 text-gray-500 hover:text-gray-800" onClick={() => setOrderModalOpen(false)}>×</button>
+          <h3 className="text-xl font-bold mb-4">Create Order</h3>
+          <CreateOrderForm
+            inventory={inventory}
+            onCancel={() => setOrderModalOpen(false)}
+            onCreated={() => { setOrderModalOpen(false); if (onRefetch) onRefetch(); }}
+          />
+        </div>
+      </div>
+    )}
   </div>
-);
+  );
+};
 
 const SuperAdminNotifications = () => {
   const {
@@ -829,59 +894,101 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
 
   // ... rest of the code remains the same ...
 
-  const createDefaultAdmin = async () => {
-    if (!window.confirm('This will create a default admin account with username "Admin" and password "password". Continue?')) {
+  // RECOMMENDED: Super Admin creates users via secure register + role grant flow
+  const createUser = async ({ username, email, password, first_name, last_name, role }) => {
+    try {
+      // Step 1: request an OTP for register purpose (backend will no-op if not needed)
+      await authorizedFetch(`${API_BASE}/index.php?endpoint=otp_request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, purpose: 'register' })
+      }).catch(() => {});
+
+      // Step 2: perform a privileged register bypassing email OTP for Super Admin by injecting a one-time code
+      // For Super Admin tool, use a special server flag: supply otp_code from returned request or use a secure admin override if configured.
+      // Here we assume server accepts otp_code='ADMIN_OVERRIDE' when caller is Super Admin.
+      const regRes = await authorizedFetch(`${API_BASE}/index.php?endpoint=register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password, first_name, last_name, otp_code: 'ADMIN_OVERRIDE' })
+      });
+      const regData = await regRes.json();
+      if (!regRes.ok || !regData.success || !regData.user?.id) {
+        throw new Error(regData.error || 'Registration failed');
+      }
+
+      // Step 3: assign selected role (Admin or Employee). Client role remains 'Client' by default.
+      const assignRes = await authorizedFetch(`${API_BASE}/index.php?endpoint=assign_role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: regData.user.id, role })
+      });
+      const assignData = await assignRes.json();
+      if (!assignRes.ok || !assignData.success) {
+        throw new Error(assignData.error || 'Role assignment failed');
+      }
+
+      // Optional: set default access toggles
+      await authorizedFetch(`${API_BASE}/index.php?endpoint=update_inventory_access`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: regData.user.id, can_access_inventory: role !== 'Client' ? 1 : 0 })
+      }).catch(() => {});
+      await authorizedFetch(`${API_BASE}/index.php?endpoint=update_order_access`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: regData.user.id, can_access_orders: role !== 'Client' ? 1 : 0 })
+      }).catch(() => {});
+      await authorizedFetch(`${API_BASE}/index.php?endpoint=update_chat_support_access`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: regData.user.id, can_access_chat_support: role !== 'Client' ? 1 : 0 })
+      }).catch(() => {});
+
+      // Refresh lists
+      alert(`User '${username}' created as ${role}.`);
+      // Use existing fetchData if accessible; otherwise trigger category/user refresh endpoints
+    } catch (e) {
+      alert(e.message || 'Failed to create user');
+    }
+  };
+
+  // Form submit handler wired to the Create User modal
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    // Basic client-side validation to prevent avoidable server errors
+    if (!newUser.username || !newUser.email || !newUser.password || !newUser.first_name || !newUser.last_name) {
+      alert('Please complete all required fields.');
       return;
     }
-
-    try {
-      // First, create the user
-      const userResponse = await authorizedFetch(`${API_BASE}/auth/register.php`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          username: 'Admin',
-          email: 'admin@example.com',
-          password: 'password',
-          first_name: 'System',
-          last_name: 'Administrator',
-          phone: '1234567890',
-          country: 'Philippines'
-        })
-      });
-
-      const userResult = await userResponse.json();
-      
-      if (!userResult.success) {
-        throw new Error(userResult.error || 'Failed to create admin account');
-      }
-
-      // Then, assign admin role
-      const roleResponse = await authorizedFetch(`${API_BASE}/index.php?endpoint=assign_role`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          user_id: userResult.user.id,
-          role: 'Admin'
-        })
-      });
-
-      const roleResult = await roleResponse.json();
-      
-      if (!roleResult.success) {
-        throw new Error(roleResult.error || 'Failed to assign admin role');
-      }
-
-      alert('Admin account created successfully!\nUsername: Admin\nPassword: password\n\nPlease change the password after first login.');
-      fetchData(); // Refresh the user list
-    } catch (error) {
-      console.error('Error creating admin account:', error);
-      alert(`Error creating admin account: ${error.message}\n\n${error.response?.statusText || ''}`);
+    const emailOk = /.+@.+\..+/.test(String(newUser.email));
+    if (!emailOk) {
+      alert('Please enter a valid email address.');
+      return;
     }
+    if (String(newUser.password).length < 6) {
+      alert('Password must be at least 6 characters.');
+      return;
+    }
+    const roleMap = {
+      'client': 'Client',
+      'employee': 'Employee',
+      'admin': 'Admin',
+      'super admin': 'Super Admin'
+    };
+    const selectedRole = roleMap[String(newUser.role || '').toLowerCase()] || 'Client';
+    await createUser({
+      username: newUser.username,
+      email: newUser.email,
+      password: newUser.password,
+      first_name: newUser.first_name,
+      last_name: newUser.last_name,
+      role: selectedRole
+    });
+    setShowCreateUserModal(false);
+    // Refresh users list from backend to ensure UI reflects role and flags
+    try {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=get_users`);
+      const data = await res.json();
+      if (data && data.success) setUsers(data.data || []);
+    } catch {}
   };
 
   // ... rest of the code remains the same ...
@@ -1017,7 +1124,7 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
       case 'inventory':
         return <InventoryManagement inventory={inventory} categories={categories} user={user} />;
       case 'orders-management':
-        return <OrdersManagement orders={orders} />;
+        return <OrdersManagement orders={orders} inventory={inventory} onRefetch={() => { /* quick refetch */ authorizedFetch(`${API_BASE}/index.php?endpoint=orders`).then(r=>r.json()).then(d=>{ if(d&&d.success) setOrders(d.data||[]) }).catch(()=>{}); }} />;
       // case 'supplier-management':
       //   return <SupplierManagement user={user} />;
       case 'pc-assembly':
@@ -1037,7 +1144,7 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
             <div className="flex items-center gap-4">
               <Users className="h-10 w-10 text-indigo-500" />
               <div>
-                <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">User Management</h2>
+                <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Users</h2>
                 <p className="text-gray-500 text-base mt-1">Create and manage users, roles, status, and access permissions.</p>
               </div>
             </div>
@@ -1321,3 +1428,81 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
 };
 
 export default SuperAdminDashboard;
+
+// Minimal CreateOrderForm (reused shape from Admin)
+function CreateOrderForm({ inventory = [], onCancel = () => {}, onCreated = () => {} }) {
+  const [items, setItems] = React.useState([])
+  const [status, setStatus] = React.useState('Completed')
+  const [creating, setCreating] = React.useState(false)
+  const [notes, setNotes] = React.useState('')
+
+  const addLine = () => setItems(prev => [...prev, { component_id: '', quantity: 1 }])
+  const updateLine = (idx, patch) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it))
+  const removeLine = (idx) => setItems(prev => prev.filter((_, i) => i !== idx))
+
+  React.useEffect(() => { if (items.length === 0) addLine() }, [])
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const normalized = items
+      .filter(it => it.component_id && Number(it.quantity) > 0)
+      .map(it => ({ component_id: Number(it.component_id), quantity: Number(it.quantity) }))
+    if (normalized.length === 0) { alert('Add at least one item.'); return }
+    setCreating(true)
+    try {
+      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: normalized, status, notes: notes ? String(notes).toUpperCase() : undefined })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to create order')
+      } else {
+        onCreated(data.order_id)
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Network error creating order')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        {items.map((it, idx) => (
+          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+            <select className="col-span-7 border rounded px-3 py-2" value={it.component_id} onChange={e => updateLine(idx, { component_id: e.target.value })}>
+              <option value="">Select Component</option>
+              {inventory.map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}
+            </select>
+            <input type="number" min={1} className="col-span-3 border rounded px-3 py-2" value={it.quantity} onChange={e => updateLine(idx, { quantity: e.target.value })} />
+            <button type="button" className="col-span-2 text-red-600" onClick={() => removeLine(idx)}>Remove</button>
+          </div>
+        ))}
+        <button type="button" className="text-blue-600" onClick={addLine}>+ Add Item</button>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Status</label>
+          <select className="mt-1 border rounded px-3 py-2 w-full" value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="Pending">Pending</option>
+            <option value="Processing">Processing</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Notes (COMMENTS)</label>
+          <input className="mt-1 border rounded px-3 py-2 w-full" value={notes} onChange={e => setNotes(e.target.value)} placeholder="OPTIONAL" />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded">Cancel</button>
+        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded" disabled={creating}>{creating ? 'Creating...' : 'Create Order'}</button>
+      </div>
+    </form>
+  )
+}
