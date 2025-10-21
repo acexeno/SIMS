@@ -7,7 +7,12 @@ if (PHP_SAPI === 'cli') {
 }
 
 // Load environment configuration
-require_once __DIR__ . '/env.php';
+try {
+    require_once __DIR__ . '/env.php';
+} catch (Exception $e) {
+    // If env.php fails, continue with defaults
+    error_log('Warning: Could not load env.php: ' . $e->getMessage());
+}
 
 // Provide a polyfill for getallheaders on environments where it is not defined (e.g., FastCGI)
 if (!function_exists('getallheaders')) {
@@ -34,8 +39,11 @@ function getAllowedOrigins() {
     $allowedOrigins = env('CORS_ALLOWED_ORIGINS', '');
     
     if (empty($allowedOrigins)) {
-        // Default to localhost for development
-        return ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'];
+        // Default to localhost for development - include common ports
+        return [
+            'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5175', 'http://localhost:8080',
+            'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:5175', 'http://127.0.0.1:8080'
+        ];
     }
     
     return array_map('trim', explode(',', $allowedOrigins));
@@ -56,12 +64,20 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
         header("Access-Control-Allow-Origin: $origin");
         header('Access-Control-Allow-Credentials: true');
     } else {
-        // In development, allow localhost
+        // In development, allow localhost only
         if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false) {
             header("Access-Control-Allow-Origin: $origin");
             header('Access-Control-Allow-Credentials: true');
         } else {
-            header("Access-Control-Allow-Origin: *");
+            // For development, allow requests without origin (like from Vite proxy)
+            if (empty($origin)) {
+                header("Access-Control-Allow-Origin: *");
+            } else {
+                // Reject unknown origins
+                http_response_code(403);
+                echo json_encode(['error' => 'CORS: Origin not allowed']);
+                exit();
+            }
         }
     }
     header('Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT, DELETE');
@@ -76,12 +92,20 @@ if ($origin && isOriginAllowed($origin)) {
     header("Access-Control-Allow-Origin: $origin");
     header('Access-Control-Allow-Credentials: true');
 } else {
-    // In development, allow localhost
+    // In development, allow localhost only
     if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false) {
         header("Access-Control-Allow-Origin: $origin");
         header('Access-Control-Allow-Credentials: true');
     } else {
-        header("Access-Control-Allow-Origin: *");
+        // For development, allow requests without origin (like from Vite proxy)
+        if (empty($origin)) {
+            header("Access-Control-Allow-Origin: *");
+        } else {
+            // Reject unknown origins
+            http_response_code(403);
+            echo json_encode(['error' => 'CORS: Origin not allowed']);
+            exit();
+        }
     }
 }
 

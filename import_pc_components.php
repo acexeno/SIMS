@@ -1,6 +1,6 @@
 <?php
 // FINALIZED: Import using exact mapping from CSV category names to DB category IDs, with error handling and validation
-$csvFile = __DIR__ . '/components_database_cleaned.csv';
+$csvFile = __DIR__ . '/data/components_database_cleaned.csv';
 $dbHost = 'localhost';
 $dbName = 'builditpc_db';
 $dbUser = 'root';

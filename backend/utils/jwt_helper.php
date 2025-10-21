@@ -8,11 +8,11 @@
 require_once __DIR__ . '/../config/env.php';
 
 // JWT configuration (overridable via environment)
-define('JWT_SECRET', env('JWT_SECRET', 'builditpc_secret_key_2024_change_in_production'));
+define('JWT_SECRET', env('JWT_SECRET', 'CHANGE_THIS_JWT_SECRET_IN_PRODUCTION_2024_SECURE_KEY_64_CHARS'));
 define('JWT_ALGORITHM', 'HS256');
 define('JWT_EXPIRY', (int) env('JWT_EXPIRY', '7200')); // default 2 hours (increased from 1 hour for better UX)
 // Refresh token configuration
-define('REFRESH_JWT_SECRET', env('REFRESH_JWT_SECRET', JWT_SECRET));
+define('REFRESH_JWT_SECRET', env('REFRESH_JWT_SECRET', 'CHANGE_THIS_REFRESH_JWT_SECRET_IN_PRODUCTION_2024_SECURE_KEY_64_CHARS'));
 define('REFRESH_JWT_EXPIRY', (int) env('REFRESH_JWT_EXPIRY', '1209600')); // default 14 days
 
 /**

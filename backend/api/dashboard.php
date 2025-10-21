@@ -84,6 +84,11 @@ function handleGetDashboardData($pdo) {
                     FROM users u
                     LEFT JOIN user_roles ur ON u.id = ur.user_id
                     LEFT JOIN roles r ON ur.role_id = r.id
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM user_roles ur2 
+                        JOIN roles r2 ON ur2.role_id = r2.id 
+                        WHERE ur2.user_id = u.id AND r2.name = 'Client'
+                    )
                     GROUP BY u.id
                 ");
                 $data['users'] = $stmt->fetchAll(PDO::FETCH_ASSOC);

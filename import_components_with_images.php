@@ -5,7 +5,7 @@
 require_once __DIR__ . '/backend/config/database.php';
 
 $pdo = get_db_connection();
-$csvFile = __DIR__ . '/components_database_with_images.csv';
+$csvFile = __DIR__ . '/data/components_database_with_images.csv';
 
 if (!file_exists($csvFile)) {
     die("CSV file not found: $csvFile\n");

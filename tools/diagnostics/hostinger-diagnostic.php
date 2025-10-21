@@ -7,7 +7,8 @@ echo "=====================================\n\n";
 
 // Check if .env file exists and is readable
 echo "1. Checking .env file...\n";
-$envPath = __DIR__ . '/.env';
+$projectRoot = dirname(__DIR__, 2); // tools/diagnostics -> tools -> project root
+$envPath = $projectRoot . '/.env';
 if (!file_exists($envPath)) {
     echo "❌ .env file not found at: $envPath\n";
     echo "   Please create the .env file in the root directory\n";
@@ -30,7 +31,7 @@ if (!file_exists($envPath)) {
 // Load environment configuration
 echo "\n2. Loading environment configuration...\n";
 try {
-    require_once __DIR__ . '/backend/config/env.php';
+    require_once $projectRoot . '/backend/config/env.php';
     echo "✅ Environment loader loaded successfully\n";
 } catch (Exception $e) {
     echo "❌ Failed to load environment: " . $e->getMessage() . "\n";
@@ -65,7 +66,7 @@ foreach ($criticalVars as $var => $expected) {
 // Test JWT functionality
 echo "\n4. Testing JWT functionality...\n";
 try {
-    require_once __DIR__ . '/backend/utils/jwt_helper.php';
+    require_once $projectRoot . '/backend/utils/jwt_helper.php';
     
     // Test JWT generation
     $testToken = generateJWT(1, 'test_user', ['Admin']);
@@ -89,7 +90,7 @@ try {
 // Test database connection
 echo "\n5. Testing database connection...\n";
 try {
-    require_once __DIR__ . '/backend/config/database.php';
+    require_once $projectRoot . '/backend/config/database.php';
     $pdo = get_db_connection();
     echo "✅ Database connection successful\n";
     
@@ -133,7 +134,7 @@ try {
 
 // Test API endpoint
 echo "\n6. Testing API endpoint structure...\n";
-$apiPath = __DIR__ . '/backend/api/index.php';
+$apiPath = $projectRoot . '/backend/api/index.php';
 if (file_exists($apiPath)) {
     echo "✅ API endpoint file exists\n";
 } else {
@@ -170,7 +171,7 @@ $criticalFiles = [
 ];
 
 foreach ($criticalFiles as $file) {
-    $fullPath = __DIR__ . '/' . $file;
+    $fullPath = $projectRoot . '/' . $file;
     if (file_exists($fullPath)) {
         echo "✅ $file exists\n";
     } else {

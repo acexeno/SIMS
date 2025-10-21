@@ -1,5 +1,6 @@
 <?php
-require_once __DIR__ . '/backend/config/database.php';
+$projectRoot = dirname(__DIR__, 2);
+require_once $projectRoot . '/backend/config/database.php';
 
 echo "Updating Chat Database Schema\n";
 echo "================================\n\n";
@@ -58,8 +59,23 @@ try {
         echo "   Read status column already exists\n";
     }
     
+    // Ensure correct ENUMs on chat_messages columns
+    echo "\n3. Normalizing ENUM definitions...\n";
+    try {
+        $pdo->exec("ALTER TABLE chat_messages MODIFY COLUMN sender ENUM('user','admin','system') NOT NULL");
+        echo "   ✓ sender enum normalized to ('user','admin','system')\n";
+    } catch (PDOException $e) {
+        echo "   sender enum update note: " . $e->getMessage() . "\n";
+    }
+    try {
+        $pdo->exec("ALTER TABLE chat_messages MODIFY COLUMN read_status ENUM('read','unread') NOT NULL DEFAULT 'unread'");
+        echo "   ✓ read_status enum normalized to ('read','unread') with default 'unread'\n";
+    } catch (PDOException $e) {
+        echo "   read_status enum update note: " . $e->getMessage() . "\n";
+    }
+
     // Add indexes
-    echo "\n3. Adding indexes...\n";
+    echo "\n4. Adding indexes...\n";
     
     try {
         $pdo->exec('CREATE INDEX idx_status ON chat_sessions (status)');

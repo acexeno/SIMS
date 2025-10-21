@@ -8,10 +8,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
 }
 
-require_once __DIR__ . '/../config/cors.php';
-require_once __DIR__ . '/../config/database.php';
-require_once __DIR__ . '/../utils/jwt_helper.php';
-require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../backend/config/cors.php';
+require_once __DIR__ . '/../backend/config/database.php';
+require_once __DIR__ . '/../backend/utils/jwt_helper.php';
+require_once __DIR__ . '/../backend/api/auth.php';
 
 $pdo = get_db_connection();
 

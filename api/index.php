@@ -1,7 +1,7 @@
 <?php
-require_once __DIR__ . '/../config/cors.php';
-require_once __DIR__ . '/../config/env.php';
-require_once __DIR__ . '/../config/security.php';
+require_once __DIR__ . '/../backend/config/cors.php';
+require_once __DIR__ . '/../backend/config/env.php';
+require_once __DIR__ . '/../backend/config/security.php';
 // require_once __DIR__ . '/../middleware/simple_security_middleware.php';
 
 // Ensure application timezone is set (default to Philippines)
@@ -81,21 +81,21 @@ set_exception_handler(function($exception) {
 });
 
 // include all the files we need
-require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../backend/config/database.php';
 $pdo = get_db_connection();
 
 // Initialize simple security middleware (temporarily disabled)
 // initSimpleSecurityMiddleware($pdo);
 
-require_once __DIR__ . '/../utils/jwt_helper.php';
-require_once __DIR__ . '/../utils/branch_helper.php';
-require_once __DIR__ . '/auth.php'; // has all the auth functions
-require_once __DIR__ . '/builds.php'; // has all the build functions
-require_once __DIR__ . '/notifications.php'; // has all the notification functions
-require_once __DIR__ . '/dashboard.php'; // has all the dashboard data functions
-require_once __DIR__ . '/orders.php'; // sales/orders endpoints
-require_once __DIR__ . '/otp.php'; // OTP endpoints (request/verify)
-require_once __DIR__ . '/mail.php'; // Mail test endpoint (admin only)
+require_once __DIR__ . '/../backend/utils/jwt_helper.php';
+require_once __DIR__ . '/../backend/utils/branch_helper.php';
+require_once __DIR__ . '/../backend/api/auth.php'; // has all the auth functions
+require_once __DIR__ . '/../backend/api/builds.php'; // has all the build functions
+require_once __DIR__ . '/../backend/api/notifications.php'; // has all the notification functions
+require_once __DIR__ . '/../backend/api/dashboard.php'; // has all the dashboard data functions
+require_once __DIR__ . '/../backend/api/orders.php'; // sales/orders endpoints
+require_once __DIR__ . '/../backend/api/otp.php'; // OTP endpoints (request/verify)
+require_once __DIR__ . '/../backend/api/mail.php'; // Mail test endpoint (admin only)
 
 // debug: check if builds functions are loaded
 // error_log("API Router: Checking if builds functions are loaded...");

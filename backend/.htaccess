@@ -1,26 +1,49 @@
-<IfModule mod_rewrite.c>
-RewriteEngine On
+# Minimal Security Configuration for PC Building System Backend
+# This file provides basic security protection
 
-# Block direct access to backend internals
-RewriteRule ^(config|database|migrations|utils|tools|scripts|logs)/ - [F,L,NC]
+# Disable directory browsing
+Options -Indexes
 
-# Route API requests to central router if file/folder does not exist
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^api(?:/.*)?$ api/index.php [QSA,L]
-</IfModule>
+# Protect sensitive files
+<Files ".env*">
+    Require all denied
+</Files>
 
-# Block environment and hidden files
-<FilesMatch "^\.(env|git|htaccess)$">
-  Require all denied
+<Files "*.log">
+    Require all denied
+</Files>
+
+<Files "*.sql">
+    Require all denied
+</Files>
+
+<Files "*.md">
+    Require all denied
+</Files>
+
+# Protect directories
+<Directory "config">
+    Require all denied
+</Directory>
+
+<Directory "logs">
+    Require all denied
+</Directory>
+
+<Directory "vendor">
+    Require all denied
+</Directory>
+
+<Directory "scripts">
+    Require all denied
+</Directory>
+
+# Prevent access to backup files
+<FilesMatch "\.(bak|backup|old|tmp|temp)$">
+    Require all denied
 </FilesMatch>
 
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-</IfModule>
-
-# Pass Authorization header to PHP
-SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
-
-RewriteCond %{HTTP:Authorization} ^(.*)
-RewriteRule ^(.*)$ - [E=HTTP_AUTHORIZATION:%1]
+# Prevent access to version control files
+<FilesMatch "\.(git|svn|hg)$">
+    Require all denied
+</FilesMatch>

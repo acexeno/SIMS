@@ -45,7 +45,7 @@ function getCategoryId(PDO $pdo, string $categoryName): int {
 
 // --- Main Import Logic ---
 
-$csvFile = __DIR__ . '/filtered_components_for_import.csv';
+$csvFile = __DIR__ . '/data/filtered_components_for_import.csv';
 
 if (!file_exists($csvFile)) {
     die("Error: CSV file not found at '$csvFile'\n");

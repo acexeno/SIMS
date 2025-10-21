@@ -6,9 +6,10 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configuration
-const sourceDir = './PCAssemblyimages';
-const targetDir = './public/images/components';
+// Configuration (paths relative to project root)
+const rootDir = path.resolve(__dirname, '..');
+const sourceDir = path.join(rootDir, 'PCAssemblyimages');
+const targetDir = path.join(rootDir, 'public', 'images', 'components');
 
 // Category mapping from your folder names to the expected structure
 const categoryMapping = {
@@ -208,7 +209,7 @@ function syncImages() {
 
 // Function to update componentImages.js
 function updateComponentImagesFile(componentMappings) {
-  const componentImagesPath = './src/utils/componentImages.js';
+  const componentImagesPath = path.join(rootDir, 'src', 'utils', 'componentImages.js');
   
   if (!fs.existsSync(componentImagesPath)) {
     console.log('⚠️  componentImages.js not found, skipping update');
@@ -264,7 +265,7 @@ function updateComponentImagesFile(componentMappings) {
 
 // Function to create a backup
 function createBackup() {
-  const backupDir = './backup-component-images-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+  const backupDir = path.join(rootDir, 'backup-component-images-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-'));
   
   if (fs.existsSync(targetDir)) {
     try {

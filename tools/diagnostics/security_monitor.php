@@ -2,8 +2,9 @@
 // Security monitoring script
 // Run this script to check security status and generate reports
 
-require_once __DIR__ . '/backend/config/database.php';
-require_once __DIR__ . '/backend/config/security.php';
+$projectRoot = dirname(__DIR__, 2);
+require_once $projectRoot . '/backend/config/database.php';
+require_once $projectRoot . '/backend/config/security.php';
 
 function generateSecurityReport($pdo) {
     echo "🔒 Security Monitoring Report - " . date('Y-m-d H:i:s') . "\n";

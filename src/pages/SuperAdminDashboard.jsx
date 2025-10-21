@@ -991,74 +991,70 @@ const SuperAdminDashboard = ({ initialTab = 'dashboard', user, setUser }) => {
     } catch {}
   };
 
-  // ... rest of the code remains the same ...
+  // Handler for toggling inventory access
+  const handleToggleInventoryAccess = async (userId, currentValue) => {
+    try {
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_inventory_access`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: userId, can_access_inventory: currentValue ? 0 : 1 })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_inventory: currentValue ? 0 : 1 } : u));
+      } else {
+        alert(result.error || 'Failed to update inventory access');
+      }
+    } catch (e) {
+      alert('Error updating inventory access');
+    }
+  };
+
+  // Handler for toggling order access
+  const handleToggleOrderAccess = async (userId, currentValue) => {
+    try {
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_order_access`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: userId, can_access_orders: currentValue ? 0 : 1 })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_orders: currentValue ? 0 : 1 } : u));
+      } else {
+        alert(result.error || 'Failed to update order access');
+      }
+    } catch (e) {
+      alert('Error updating order access');
+    }
+  };
+
+  // Handler for toggling chat support access
+  const handleToggleChatSupportAccess = async (userId, currentValue) => {
+    try {
+      const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_chat_support_access`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: userId, can_access_chat_support: currentValue ? 0 : 1 })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_chat_support: currentValue ? 0 : 1 } : u));
+      } else {
+        alert(result.error || 'Failed to update chat support access');
+      }
+    } catch (e) {
+      alert('Error updating chat support access');
+    }
+  };
 
   const UserManagement = (props) => {
-    // ... rest of the code remains the same ...
-
-    // Handler for toggling inventory access
-    const handleToggleInventoryAccess = async (userId, currentValue) => {
-      try {
-        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_inventory_access`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ user_id: userId, can_access_inventory: currentValue ? 0 : 1 })
-        });
-        const result = await response.json();
-        if (result.success) {
-          setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_inventory: currentValue ? 0 : 1 } : u));
-        } else {
-          alert(result.error || 'Failed to update inventory access');
-        }
-      } catch (e) {
-        alert('Error updating inventory access');
-      }
-    };
-
-    // In UserManagement, add the handler:
-    const handleToggleOrderAccess = async (userId, currentValue) => {
-      try {
-        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_order_access`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ user_id: userId, can_access_orders: currentValue ? 0 : 1 })
-        });
-        const result = await response.json();
-        if (result.success) {
-          setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_orders: currentValue ? 0 : 1 } : u));
-        } else {
-          alert(result.error || 'Failed to update order access');
-        }
-      } catch (e) {
-        alert('Error updating order access');
-      }
-    };
-
-    // In UserManagement, add handler for chat support access
-    const handleToggleChatSupportAccess = async (userId, currentValue) => {
-      try {
-        const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=update_chat_support_access`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ user_id: userId, can_access_chat_support: currentValue ? 0 : 1 })
-        });
-        const result = await response.json();
-        if (result.success) {
-          setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_access_chat_support: currentValue ? 0 : 1 } : u));
-        } else {
-          alert(result.error || 'Failed to update chat support access');
-        }
-      } catch (e) {
-        alert('Error updating chat support access');
-      }
-    };
-
     // ... rest of the code remains the same ...
 
     const handleCreateUser = async (e) => {
