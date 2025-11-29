@@ -1,4 +1,4 @@
-// Comprehensive Compatibility Service for PC Building System
+
 
 // Compatibility rules and specifications
 const COMPATIBILITY_RULES = {

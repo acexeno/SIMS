@@ -20,15 +20,33 @@ const EmployeeSidebar = ({ currentPage, onPageChange, user, onLogout, isCollapse
   // get the user's role display text
   const getUserRoleDisplay = () => {
     if (!user?.roles) return 'User';
-    return user.roles.join(', ');
+    
+    // Handle both string and array formats
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    // Remove duplicates and join
+    const uniqueRoles = [...new Set(roleArray)];
+    return uniqueRoles.join(', ');
   };
 
   // pick the right color based on user role
   const getRoleColor = () => {
     if (!user?.roles) return 'bg-gray-500';
-    if (user.roles.includes('Super Admin')) return 'bg-red-500';
-    if (user.roles.includes('Admin')) return 'bg-purple-500';
-    if (user.roles.includes('Employee')) return 'bg-blue-500';
+    
+    // Use the same robust role extraction logic
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    if (roleArray.includes('Super Admin')) return 'bg-green-500';
+    if (roleArray.includes('Admin')) return 'bg-green-500';
+    if (roleArray.includes('Employee')) return 'bg-green-500';
     return 'bg-green-500';
   };
 
@@ -164,7 +182,7 @@ const EmployeeSidebar = ({ currentPage, onPageChange, user, onLogout, isCollapse
                 tab.isDisabled
                   ? 'text-gray-400 cursor-not-allowed opacity-60 bg-gray-50 border border-gray-200'
                   : currentPage === tab.id
-                    ? 'bg-blue-100 text-blue-700'
+                    ? 'bg-green-100 text-green-700'
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
               title={tab.isDisabled ? 'Access disabled by Super Admin' : tab.name}

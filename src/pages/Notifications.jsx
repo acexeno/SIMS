@@ -65,7 +65,7 @@ const Notifications = ({ user }) => {
       case 'medium':
         return 'border-l-orange-500'
       case 'low':
-        return 'border-l-blue-500'
+        return 'border-l-green-500'
       default:
         return 'border-l-gray-500'
     }
@@ -221,7 +221,13 @@ const Notifications = ({ user }) => {
                         </button>
                       )}
                       <button
-                        onClick={() => deleteNotification(notification.id)}
+                        onClick={() => {
+                          if (notification.id && notification.id > 0) {
+                            deleteNotification(notification.id)
+                          } else {
+                            console.error('Cannot delete notification: Invalid ID', notification)
+                          }
+                        }}
                         className="p-1 text-gray-400 hover:text-red-600 transition-colors"
                         title="Delete notification"
                       >

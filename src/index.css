@@ -113,6 +113,41 @@
     border-radius: 3px;
   }
   
+  .scrollbar-thumb-gray-300::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af;
+  }
+  
+  /* Enhanced modal scrollbar styles */
+  .modal-scrollbar::-webkit-scrollbar {
+    width: 10px;
+  }
+  
+  .modal-scrollbar::-webkit-scrollbar-track {
+    background: #f8fafc;
+    border-radius: 8px;
+    margin: 8px 0;
+  }
+  
+  .modal-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #cbd5e1 0%, #94a3b8 100%);
+    border-radius: 8px;
+    border: 2px solid #f8fafc;
+  }
+  
+  .modal-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #94a3b8 0%, #64748b 100%);
+  }
+  
+  .modal-scrollbar::-webkit-scrollbar-corner {
+    background: #f8fafc;
+  }
+  
+  /* Ensure scrollbar stays within modal bounds */
+  .modal-scrollbar {
+    padding-right: 0;
+    margin-right: 0;
+  }
+  
   /* Only show scrollbars when content overflows */
   .overflow-x-auto:empty {
     overflow-x: hidden;
@@ -441,4 +476,197 @@ div::-webkit-scrollbar-thumb {
 
 *::-webkit-scrollbar-thumb:hover {
   background: #6b7280 !important;
+}
+
+/* ============================================
+   CHAT SUPPORT SCROLLBAR FIX - PRODUCTION
+   ============================================ */
+
+/* CSS Variables for chat scrollbar */
+:root {
+  --chat-scrollbar-width: 12px;
+  --chat-scrollbar-track: #dbeafe;
+  --chat-scrollbar-thumb: #15803d;
+  --chat-scrollbar-thumb-hover: #0f5132;
+  --chat-scrollbar-thumb-active: #0a3823;
+}
+
+/* Force scrollbar visibility for chat-scrollbar-visible class */
+.chat-scrollbar-visible {
+  scrollbar-gutter: stable both-edges !important;
+  scrollbar-width: auto !important;
+  scrollbar-color: var(--chat-scrollbar-thumb) var(--chat-scrollbar-track) !important;
+  -webkit-overflow-scrolling: touch !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar {
+  width: var(--chat-scrollbar-width) !important;
+  height: var(--chat-scrollbar-width) !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar-track {
+  background: var(--chat-scrollbar-track) !important;
+  border-radius: 999px !important;
+  border: 1px solid #93c5fd !important;
+  box-shadow: inset 0 0 6px rgba(15, 23, 42, 0.18) !important;
+  display: block !important;
+  visibility: visible !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #22c55e, var(--chat-scrollbar-thumb)) !important;
+  border-radius: 999px !important;
+  border: 3px solid #ecfccb !important;
+  min-height: 32px !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3) !important;
+  display: block !important;
+  visibility: visible !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #16a34a, var(--chat-scrollbar-thumb-hover)) !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #15803d, var(--chat-scrollbar-thumb-active)) !important;
+}
+
+.chat-scrollbar-visible::-webkit-scrollbar-corner {
+  background: var(--chat-scrollbar-track) !important;
+}
+
+/* Messages area scrollbar enforcement - ALWAYS VISIBLE */
+.messages-area {
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  will-change: scroll-position;
+  /* Force scrollbar to always be visible */
+  scrollbar-width: auto !important;
+  scrollbar-gutter: stable both-edges !important;
+  /* Ensure container has fixed height to trigger scrolling */
+  height: 280px !important;
+  max-height: 280px !important;
+  min-height: 280px !important;
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+  flex-basis: 280px !important;
+}
+
+.messages-area::-webkit-scrollbar {
+  width: var(--chat-scrollbar-width) !important;
+  height: var(--chat-scrollbar-width) !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: transparent !important;
+}
+
+.messages-area::-webkit-scrollbar-track {
+  background: var(--chat-scrollbar-track) !important;
+  border-radius: 999px !important;
+  border: 1px solid #93c5fd !important;
+  box-shadow: inset 0 0 6px rgba(15, 23, 42, 0.18) !important;
+  display: block !important;
+  visibility: visible !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  margin: 4px 0 !important;
+}
+
+.messages-area::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #22c55e, var(--chat-scrollbar-thumb)) !important;
+  border-radius: 999px !important;
+  border: 3px solid #ecfccb !important;
+  min-height: 32px !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3) !important;
+  display: block !important;
+  visibility: visible !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.messages-area::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #16a34a, var(--chat-scrollbar-thumb-hover)) !important;
+}
+
+.messages-area::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #15803d, var(--chat-scrollbar-thumb-active)) !important;
+}
+
+.messages-area::-webkit-scrollbar-corner {
+  background: var(--chat-scrollbar-track) !important;
+}
+
+/* Chat messages wrapper - ensure proper flex constraints */
+.chat-messages-wrapper {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+}
+
+/* Force scrollbar on overflow-y-scroll class */
+.overflow-y-scroll {
+  overflow-y: scroll !important;
+}
+
+.overflow-y-scroll::-webkit-scrollbar {
+  width: var(--chat-scrollbar-width) !important;
+  display: block !important;
+}
+
+/* Quick questions scroll area */
+.quick-questions-scroll {
+  position: relative;
+  padding-right: 0.5rem;
+  overflow-y: scroll !important;
+}
+
+.quick-questions-scroll::-webkit-scrollbar {
+  width: var(--chat-scrollbar-width) !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.quick-questions-scroll::-webkit-scrollbar-track {
+  background: var(--chat-scrollbar-track) !important;
+  border-radius: 999px !important;
+  display: block !important;
+  visibility: visible !important;
+}
+
+.quick-questions-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #22c55e, var(--chat-scrollbar-thumb)) !important;
+  border-radius: 999px !important;
+  min-height: 32px !important;
+  display: block !important;
+  visibility: visible !important;
+}
+
+/* Mobile responsive scrollbar adjustments */
+@media (max-width: 640px) {
+  .chat-scrollbar-visible::-webkit-scrollbar,
+  .messages-area::-webkit-scrollbar,
+  .quick-questions-scroll::-webkit-scrollbar {
+    width: 9px !important;
+    height: 9px !important;
+  }
 } 

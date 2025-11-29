@@ -27,7 +27,8 @@ if (!$decoded || !isset($decoded['user_id'])) {
     exit;
 }
 
-$user_id = (int)$decoded['user_id'];
+// Get reviewer/admin user_id from JWT token - this is the person reviewing submissions
+$reviewer_user_id = (int)$decoded['user_id'];
 $roles = $decoded['roles'] ?? [];
 if (is_string($roles)) $roles = explode(',', $roles);
 $hasAdminAccess = false;
@@ -143,17 +144,11 @@ if ($method === 'GET') {
         try {
             $pdo->beginTransaction();
             
-            // Update submission status
+            // Get submission details first to verify it exists and get submitter info
+            // IMPORTANT: Use cs.user_id directly to ensure we get the correct submitter
+            // The submitter is the build owner, NOT the reviewer
             $stmt = $pdo->prepare("
-                UPDATE community_submissions 
-                SET status = ?, admin_notes = ?, reviewed_by = ?, reviewed_at = NOW()
-                WHERE id = ?
-            ");
-            $stmt->execute([$status, $admin_notes, $user_id, $submission_id]);
-            
-            // Get submission details
-            $stmt = $pdo->prepare("
-                SELECT cs.*, u.username as submitter_name, u.id as submitter_id
+                SELECT cs.*, u.username as submitter_name
                 FROM community_submissions cs
                 LEFT JOIN users u ON cs.user_id = u.id
                 WHERE cs.id = ?
@@ -165,23 +160,77 @@ if ($method === 'GET') {
                 throw new Exception('Submission not found');
             }
             
+            // Get the submitter's user_id directly from the submission record
+            // This ensures all operations target the actual build owner, not the reviewer
+            $submitter_user_id = (int)$submission['user_id'];
+            
+            if ($submitter_user_id <= 0) {
+                throw new Exception('Invalid submitter user ID');
+            }
+            
+            // Verify that submitter_user_id is different from reviewer_user_id
+            // This ensures user clients are properly separated
+            if ($submitter_user_id === $reviewer_user_id) {
+                // This shouldn't happen in normal flow, but log it for safety
+                // Admin reviewing their own submission is technically valid, but worth noting
+            }
+            
+            // Update submission status with reviewer information
+            // $reviewer_user_id is the admin/employee reviewing, stored in reviewed_by field
+            $stmt = $pdo->prepare("
+                UPDATE community_submissions 
+                SET status = ?, admin_notes = ?, reviewed_by = ?, reviewed_at = NOW()
+                WHERE id = ?
+            ");
+            $stmt->execute([$status, $admin_notes, $reviewer_user_id, $submission_id]);
+            
             if ($status === 'approved') {
-                // Make the build public
-                $stmt = $pdo->prepare("UPDATE user_builds SET is_public = 1 WHERE id = ?");
-                $stmt->execute([$submission['build_id']]);
+                // Verify the build belongs to the submitter before updating
+                // This ensures we're only updating builds that belong to the correct user client
+                $stmt = $pdo->prepare("
+                    SELECT id, user_id 
+                    FROM user_builds 
+                    WHERE id = ? AND user_id = ?
+                ");
+                $stmt->execute([$submission['build_id'], $submitter_user_id]);
+                $build = $stmt->fetch(PDO::FETCH_ASSOC);
                 
-                // Create notification for the submitter
-                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority, created_at) VALUES (?, 'build', ?, ?, 'low', NOW())");
-                $notification_title = "Community Build Approved";
-                $notification_message = "Your build '{$submission['build_name']}' has been approved and is now visible in the Community Builds section!";
-                $stmt->execute([$submission['submitter_id'], $notification_title, $notification_message]);
+                if (!$build) {
+                    throw new Exception('Build not found or does not belong to the submitter');
+                }
+                
+                // Make the build public - only update if build belongs to submitter
+                $stmt = $pdo->prepare("
+                    UPDATE user_builds 
+                    SET is_public = 1, updated_at = NOW() 
+                    WHERE id = ? AND user_id = ?
+                ");
+                $stmt->execute([$submission['build_id'], $submitter_user_id]);
+                
+                if ($stmt->rowCount() === 0) {
+                    throw new Exception('Failed to update build visibility - ownership verification failed');
+                }
+                
+                // Create notification for the submitter ONLY (not the reviewer)
+                // This ensures notifications go to the correct user client
+                $stmt = $pdo->prepare("
+                    INSERT INTO notifications (user_id, type, title, message, priority, created_at) 
+                    VALUES (?, 'build', ?, ?, 'low', NOW())
+                ");
+                $notification_title = "PC Build Sharing Approved";
+                $notification_message = "Your build '{$submission['build_name']}' has been approved and is now visible in the PC Build Sharing section!";
+                $stmt->execute([$submitter_user_id, $notification_title, $notification_message]);
                 
             } else {
-                // Create notification for the submitter about rejection
-                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority, created_at) VALUES (?, 'build', ?, ?, 'low', NOW())");
-                $notification_title = "Community Build Review";
-                $notification_message = "Your build '{$submission['build_name']}' was not approved for the community. Reason: " . ($admin_notes ?: 'No specific reason provided');
-                $stmt->execute([$submission['submitter_id'], $notification_title, $notification_message]);
+                // Create notification for the submitter ONLY about rejection (not the reviewer)
+                // This ensures notifications go to the correct user client
+                $stmt = $pdo->prepare("
+                    INSERT INTO notifications (user_id, type, title, message, priority, created_at) 
+                    VALUES (?, 'build', ?, ?, 'low', NOW())
+                ");
+                $notification_title = "PC Build Sharing Review";
+                $notification_message = "Your build '{$submission['build_name']}' was not approved for PC Build Sharing. Reason: " . ($admin_notes ?: 'No specific reason provided');
+                $stmt->execute([$submitter_user_id, $notification_title, $notification_message]);
             }
             
             $pdo->commit();
@@ -196,6 +245,22 @@ if ($method === 'GET') {
             echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
         }
         
+    } elseif ($action === 'delete') {
+        // Delete a community submission (admin/employee/super admin)
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        $submission_id = isset($input['submission_id']) ? (int)$input['submission_id'] : 0;
+        if ($submission_id <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Invalid submission ID']);
+            exit;
+        }
+        try {
+            $stmt = $pdo->prepare("DELETE FROM community_submissions WHERE id = ?");
+            $stmt->execute([$submission_id]);
+            echo json_encode(['success' => true]);
+        } catch (Exception $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
+        }
     } else {
         echo json_encode(['success' => false, 'error' => 'Invalid action']);
     }

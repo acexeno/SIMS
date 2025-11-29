@@ -28,17 +28,18 @@ import {
 } from 'lucide-react';
 import { formatCurrencyPHP } from '../utils/currency';
 
+// Improved color palette with better distinction between colors
 const COLORS = [
   '#6366F1', // indigo
-  '#22D3EE', // cyan
-  '#F59E42', // amber
-  '#F472B6', // pink
-  '#A3E635', // lime
-  '#F87171', // red
-  '#60A5FA', // blue
-  '#FBBF24', // yellow
-  '#34D399', // emerald
-  '#818CF8'  // indigo lighter
+  '#10B981', // emerald
+  '#F59E0B', // amber
+  '#EF4444', // red
+  '#8B5CF6', // violet
+  '#06B6D4', // cyan
+  '#EC4899', // pink
+  '#F97316', // orange
+  '#84CC16', // lime
+  '#14B8A6'  // teal
 ];
 
 const statusIcons = {
@@ -66,7 +67,7 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
     order_status_breakdown = [],
     total_sales = 0,
     total_orders = 0,
-    average_order_value = 0,
+    average_order_value = {},
     conversion_rate = 0
   } = reports;
 
@@ -100,7 +101,10 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
         ) : (
           <div className="flex flex-col items-center justify-center h-full p-6 text-center">
             <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
+            <h3 className="text-lg font-medium text-gray-500 mb-2">No sales data available</h3>
+            <p className="text-gray-400 text-sm max-w-md mx-auto text-center leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
           </div>
         )}
       </ResponsiveContainer>
@@ -122,7 +126,10 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
         ) : (
           <div className="flex flex-col items-center justify-center h-full p-6 text-center">
             <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No weekly data available</h3>
+            <h3 className="text-lg font-medium text-gray-500 mb-2">No weekly data available</h3>
+            <p className="text-gray-400 text-sm max-w-md mx-auto text-center leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
           </div>
         )}
       </ResponsiveContainer>
@@ -144,7 +151,10 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
         ) : (
           <div className="flex flex-col items-center justify-center h-full p-6 text-center">
             <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No daily data available</h3>
+            <h3 className="text-lg font-medium text-gray-500 mb-2">No daily data available</h3>
+            <p className="text-gray-400 text-sm max-w-md mx-auto text-center leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
           </div>
         )}
       </ResponsiveContainer>
@@ -211,7 +221,7 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Avg. Order Value</p>
-              <p className="text-xl font-semibold text-gray-900">{formatCurrency(average_order_value)}</p>
+              <p className="text-xl font-semibold text-gray-900">{formatCurrency(average_order_value?.avg_order_value || 0)}</p>
             </div>
           </div>
         </div>
@@ -323,51 +333,59 @@ const AdminReports = ({ reports = {}, orders = [] }) => {
             </span>
           </div>
           <div className="h-64">
-            {revenue_per_category && revenue_per_category.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={revenue_per_category}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="revenue"
-                    nameKey="name"
-                    label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
-                  >
-                    {revenue_per_category.map((entry, index) => (
-                      <Cell 
-                        key={`cell-${index}`} 
-                        fill={COLORS[index % COLORS.length]} 
-                        stroke="#fff"
-                        strokeWidth={1}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    formatter={(value) => [formatCurrency(value), 'Revenue']}
-                    labelFormatter={(name) => `Category: ${name}`}
-                  />
-                  <Legend 
-                    layout="vertical"
-                    align="right"
-                    verticalAlign="middle"
-                    formatter={(value, entry, index) => (
-                      <span className="text-xs text-gray-600">
-                        {value} ({
-                          (revenue_per_category[index]?.revenue && revenue_per_category.length > 0) 
-                            ? ((revenue_per_category[index].revenue / 
-                                Math.max(1, revenue_per_category.reduce((sum, item) => sum + (Number(item.revenue) || 0), 0)) * 100).toFixed(1) + '%')
-                            : '0%'
-                        })
-                      </span>
-                    )}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
+            {revenue_per_category && revenue_per_category.length > 0 ? (() => {
+              // Sort data by revenue descending and calculate total
+              const sortedData = [...revenue_per_category]
+                .map(item => ({
+                  ...item,
+                  total_revenue: Number(item.total_revenue) || 0
+                }))
+                .sort((a, b) => b.total_revenue - a.total_revenue);
+              const totalRevenue = sortedData.reduce((sum, item) => sum + item.total_revenue, 0);
+              
+              return (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={sortedData}
+                      cx="50%"
+                      cy="45%"
+                      innerRadius={35}
+                      outerRadius={75}
+                      label={false}
+                      dataKey="total_revenue"
+                      nameKey="category"
+                    >
+                      {sortedData.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={COLORS[index % COLORS.length]} 
+                          stroke="#fff"
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value, name, props) => [
+                        formatCurrencyPHP(value), 
+                        `${props.payload.category}: ${((value / totalRevenue) * 100).toFixed(1)}%`
+                      ]}
+                      labelFormatter={(name) => `Category: ${name}`}
+                    />
+                    <Legend 
+                      verticalAlign="bottom"
+                      height={36}
+                      formatter={(value, entry, index) => {
+                        const item = sortedData[index];
+                        const percent = totalRevenue > 0 ? ((item.total_revenue / totalRevenue) * 100).toFixed(1) : '0';
+                        return `${value} (${percent}%)`;
+                      }}
+                      wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              );
+            })() : (
               <div className="flex flex-col items-center justify-center h-full text-center p-6">
                 <PieIcon className="w-12 h-12 text-gray-300 mb-2" />
                 <p className="text-gray-500">No category data available</p>

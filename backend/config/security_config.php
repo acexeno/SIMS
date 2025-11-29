@@ -23,6 +23,7 @@ $securityConfig = [
         ],
         'password_requirements' => [
             'min_length' => 8,
+            'max_length' => null, // No maximum limit - allows stronger passwords and passphrases
             'require_uppercase' => true,
             'require_lowercase' => true,
             'require_numbers' => true,
@@ -41,7 +42,8 @@ $securityConfig = [
             'api_call' => ['max' => 100, 'window' => 3600],
         ],
         'password_requirements' => [
-            'min_length' => 12,
+            'min_length' => 8,
+            'max_length' => null, // No maximum limit - allows stronger passwords and passphrases
             'require_uppercase' => true,
             'require_lowercase' => true,
             'require_numbers' => true,
@@ -95,23 +97,28 @@ function getSecurityHeaders() {
 
 // Content Security Policy
 function getContentSecurityPolicy() {
+    // Allow Google reCAPTCHA domains for both production and development
+    $recaptchaDomains = "https://www.google.com https://www.gstatic.com";
+    
     if (isProduction()) {
         return "default-src 'self'; " .
-               "script-src 'self'; " .
+               "script-src 'self' {$recaptchaDomains} 'unsafe-eval'; " .
                "style-src 'self' 'unsafe-inline'; " .
-               "img-src 'self' data: https:; " .
+               "img-src 'self' data: https: {$recaptchaDomains}; " .
                "font-src 'self' data:; " .
-               "connect-src 'self'; " .
+               "connect-src 'self' {$recaptchaDomains}; " .
+               "frame-src {$recaptchaDomains}; " .
                "frame-ancestors 'none'; " .
                "base-uri 'self'; " .
                "form-action 'self';";
     } else {
         return "default-src 'self'; " .
-               "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " .
+               "script-src 'self' 'unsafe-inline' 'unsafe-eval' {$recaptchaDomains}; " .
                "style-src 'self' 'unsafe-inline'; " .
-               "img-src 'self' data: https:; " .
+               "img-src 'self' data: https: {$recaptchaDomains}; " .
                "font-src 'self' data:; " .
-               "connect-src 'self'; " .
+               "connect-src 'self' {$recaptchaDomains}; " .
+               "frame-src {$recaptchaDomains}; " .
                "frame-ancestors 'none';";
     }
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Mail, Phone, MapPin, Send, MessageSquare } from 'lucide-react';
 import { API_BASE } from '../utils/apiBase';
+import { executeRecaptcha, isRecaptchaConfigured } from '../utils/recaptcha';
 
 const Contact = ({ setCurrentPage }) => {
   const [formData, setFormData] = useState({
@@ -18,12 +19,28 @@ const Contact = ({ setCurrentPage }) => {
     setSubmitStatus(null);
     
     try {
+      // Generate reCAPTCHA token
+      let recaptchaToken = null;
+      if (isRecaptchaConfigured()) {
+        try {
+          recaptchaToken = await executeRecaptcha('contact');
+        } catch (recaptchaError) {
+          console.error('reCAPTCHA error:', recaptchaError);
+          // Continue without reCAPTCHA if it fails (graceful degradation)
+        }
+      }
+
+      const payload = { ...formData };
+      if (recaptchaToken) {
+        payload.recaptcha_token = recaptchaToken;
+      }
+
       const response = await fetch(`${API_BASE}/submit_feedback.php`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
       
       const result = await response.json();

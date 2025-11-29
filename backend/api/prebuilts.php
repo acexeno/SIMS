@@ -213,16 +213,97 @@ function seed_prebuilts($pdo, $user) {
         return $list[0];
     };
 
-    $pickRam = function() use ($rams, $getPrice) {
+    $pickRam = function($motherboard = null) use ($rams, $getPrice) {
         if (empty($rams)) return null;
+        
+        // Extract motherboard RAM type if available
+        $moboRamType = null;
+        if ($motherboard) {
+            // Check ram_type field directly
+            $moboRamType = isset($motherboard['ram_type']) ? trim($motherboard['ram_type']) : null;
+            
+            // Fallback: check in specs JSON if ram_type not directly available
+            if (empty($moboRamType) && isset($motherboard['specs'])) {
+                $specs = is_string($motherboard['specs']) ? json_decode($motherboard['specs'], true) : $motherboard['specs'];
+                if (is_array($specs) && isset($specs['ram_type'])) {
+                    $moboRamType = trim($specs['ram_type']);
+                }
+            }
+            
+            // Normalize RAM type (DDR4, DDR5, etc.)
+            if ($moboRamType) {
+                $moboRamTypeUpper = strtoupper($moboRamType);
+                if (strpos($moboRamTypeUpper, 'DDR5') !== false) {
+                    $moboRamType = 'DDR5';
+                } elseif (strpos($moboRamTypeUpper, 'DDR4') !== false) {
+                    $moboRamType = 'DDR4';
+                } elseif (strpos($moboRamTypeUpper, 'DDR3') !== false) {
+                    $moboRamType = 'DDR3';
+                }
+            }
+        }
+        
+        // Filter RAM by compatibility with motherboard
+        $compatibleRams = $rams;
+        if ($moboRamType) {
+            $compatibleRams = array_values(array_filter($rams, function($r) use ($moboRamType) {
+                $ramType = null;
+                
+                // Check ram_type field directly
+                if (isset($r['ram_type'])) {
+                    $ramType = trim($r['ram_type']);
+                }
+                
+                // Fallback: check in specs JSON
+                if (empty($ramType) && isset($r['specs'])) {
+                    $specs = is_string($r['specs']) ? json_decode($r['specs'], true) : $r['specs'];
+                    if (is_array($specs) && isset($specs['ram_type'])) {
+                        $ramType = trim($specs['ram_type']);
+                    }
+                }
+                
+                // Fallback: check in name
+                if (empty($ramType) && isset($r['name'])) {
+                    $nameUpper = strtoupper($r['name']);
+                    if (strpos($nameUpper, 'DDR5') !== false) {
+                        $ramType = 'DDR5';
+                    } elseif (strpos($nameUpper, 'DDR4') !== false) {
+                        $ramType = 'DDR4';
+                    } elseif (strpos($nameUpper, 'DDR3') !== false) {
+                        $ramType = 'DDR3';
+                    }
+                }
+                
+                // Normalize RAM type
+                if ($ramType) {
+                    $ramTypeUpper = strtoupper($ramType);
+                    if (strpos($ramTypeUpper, 'DDR5') !== false) {
+                        $ramType = 'DDR5';
+                    } elseif (strpos($ramTypeUpper, 'DDR4') !== false) {
+                        $ramType = 'DDR4';
+                    } elseif (strpos($ramTypeUpper, 'DDR3') !== false) {
+                        $ramType = 'DDR3';
+                    }
+                }
+                
+                // Return true if RAM type matches motherboard, or if we couldn't determine RAM type (fallback)
+                return !$ramType || $ramType === $moboRamType;
+            }));
+        }
+        
+        // If no compatible RAM found, fall back to all RAM (for backward compatibility)
+        if (empty($compatibleRams)) {
+            $compatibleRams = $rams;
+        }
+        
         // Prefer 16GB if mentioned, else cheapest
-        $prefer = array_values(array_filter($rams, function($r){ return stripos($r['name'] ?? '', '16') !== false; }));
+        $prefer = array_values(array_filter($compatibleRams, function($r){ return stripos($r['name'] ?? '', '16') !== false; }));
         if (!empty($prefer)) {
             usort($prefer, function($a,$b) use ($getPrice) { return $getPrice($a) <=> $getPrice($b); });
             return $prefer[0];
         }
-        usort($rams, function($a,$b) use ($getPrice) { return $getPrice($a) <=> $getPrice($b); });
-        return $rams[0];
+        usort($compatibleRams, function($a,$b) use ($getPrice) { return $getPrice($a) <=> $getPrice($b); });
+        return $compatibleRams[0];
     };
 
     $pickStorage = function() use ($stores, $getPrice) {
@@ -279,7 +360,7 @@ function seed_prebuilts($pdo, $user) {
         $name = strtolower($cpuRow['name'] ?? '');
         $isApu = (strpos($name, '5600g') !== false) || (strpos($name, '3200g') !== false) || (strpos($name, '5700g') !== false) || (strpos($name, 'g ') !== false && strpos($name, 'ryzen') !== false);
         $gpu = !$isApu || $gpuTier !== 'budget' ? $pickGpu($gpuTier) : null;
-        $ram = $pickRam();
+        $ram = $pickRam($mobo);
         $storage = $pickStorage();
         $psu = $pickPsu();
         $case = $pickCase();
@@ -295,10 +376,21 @@ function seed_prebuilts($pdo, $user) {
         if ($cooler) $ids['cooler'] = (int)$cooler['id'];
 
         $price = $getPrice($cpuRow) + $getPrice($mobo) + ($gpu ? $getPrice($gpu) : 0) + $getPrice($ram) + $getPrice($storage) + $getPrice($psu) + $getPrice($case) + $getPrice($cooler);
+        
+        // Generate detailed description with component specs
+        $cpuName = $cpuRow['name'] ?? '';
+        $description = '';
+        if ($gpu) {
+            $gpuName = $gpu['name'] ?? '';
+            $description = "Compatible prebuilt featuring {$cpuName} processor and {$gpuName}.";
+        } else {
+            $description = "Compatible prebuilt featuring {$cpuName} processor.";
+        }
+        
         return [
             'name' => $label,
             'category' => $category,
-            'description' => ucfirst($category) . ' prebuilt generated from current inventory.',
+            'description' => $description,
             'price' => $price,
             'performance' => ['gaming' => 0, 'streaming' => 0],
             'features' => [],
@@ -353,6 +445,49 @@ function seed_prebuilts($pdo, $user) {
 }
 
 /**
+ * Recalculate prebuilt price from component_ids by fetching current component prices.
+ */
+function recalculate_prebuilt_price($pdo, $prebuilt) {
+    try {
+        $componentIds = $prebuilt['component_ids'] ?? null;
+        if (!$componentIds) return 0;
+        
+        // Decode JSON if it's a string
+        if (is_string($componentIds)) {
+            $componentIds = json_decode($componentIds, true);
+        }
+        
+        if (!is_array($componentIds) || empty($componentIds)) {
+            return 0;
+        }
+        
+        // Get all component IDs
+        $ids = array_filter(array_map('intval', array_values($componentIds)));
+        if (empty($ids)) {
+            return 0;
+        }
+        
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare("SELECT id, price FROM components WHERE id IN ($placeholders)");
+        $stmt->execute($ids);
+        $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        $total = 0;
+        foreach ($components as $component) {
+            $price = floatval($component['price'] ?? 0);
+            if ($price > 0) {
+                $total += $price;
+            }
+        }
+        
+        return $total;
+    } catch (Throwable $e) {
+        error_log("Error recalculating prebuilt price: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/**
  * Guard: require Admin or Super Admin for mutating routes.
  */
 function require_admin_or_superadmin($user) {
@@ -370,6 +505,38 @@ function require_admin_or_superadmin($user) {
 switch ($method) {
     case 'GET':
         try {
+            // Check if this is a price recalculation request
+            if (isset($_GET['recalculate_prices'])) {
+                $user = get_authenticated_user($pdo);
+                require_admin_or_superadmin($user);
+                
+                $stmt = $pdo->query('SELECT * FROM prebuilts');
+                $prebuilts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $updated = 0;
+                $errors = [];
+                
+                foreach ($prebuilts as $prebuilt) {
+                    $newPrice = recalculate_prebuilt_price($pdo, $prebuilt);
+                    if ($newPrice > 0 && abs($newPrice - floatval($prebuilt['price'] ?? 0)) > 0.01) {
+                        try {
+                            $updateStmt = $pdo->prepare('UPDATE prebuilts SET price = ? WHERE id = ?');
+                            $updateStmt->execute([$newPrice, $prebuilt['id']]);
+                            $updated++;
+                        } catch (Throwable $e) {
+                            $errors[] = "Failed to update prebuilt ID {$prebuilt['id']}: " . $e->getMessage();
+                        }
+                    }
+                }
+                
+                echo json_encode([
+                    'success' => true,
+                    'updated' => $updated,
+                    'total' => count($prebuilts),
+                    'errors' => $errors
+                ]);
+                exit();
+            }
+            
             $user = get_authenticated_user($pdo);
             $show_all = isset($_GET['all']) && $user && (in_array('Super Admin', $user['roles'] ?? []) || in_array('Admin', $user['roles'] ?? []));
             $sql = 'SELECT * FROM prebuilts';

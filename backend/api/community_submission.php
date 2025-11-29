@@ -94,8 +94,8 @@ if ($method === 'POST') {
         $adminStmt = $pdo->query("SELECT u.id FROM users u JOIN user_roles ur ON u.id = ur.user_id JOIN roles r ON ur.role_id = r.id WHERE r.name IN ('Admin','Employee','Super Admin')");
         $admins = $adminStmt->fetchAll();
         if ($admins) {
-            $notification_title = 'New Community Build Submission';
-            $notification_message = "User {$username} has submitted a build '{$build_name}' for community review.";
+            $notification_title = 'New PC Build Sharing Submission';
+            $notification_message = "User {$username} has submitted a build '{$build_name}' for PC Build Sharing review.";
             $ins = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority, created_at) VALUES (?, 'build', ?, ?, 'low', NOW())");
             foreach ($admins as $admin) {
                 $ins->execute([(int)$admin['id'], $notification_title, $notification_message]);

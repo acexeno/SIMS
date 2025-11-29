@@ -1,22 +1,36 @@
-// Determines the correct API base at runtime for both dev and production builds.
-// In dev (Vite), BASE_URL is '/', and we rely on the dev proxy for '/api'.
-// In production when hosted at '/capstone2/dist/', BASE_URL is '/capstone2/dist/' and API lives at '/capstone2/api'.
+// Determines the correct API base path at runtime.
+// Export as a STRING so template literals like `${API_BASE}/index.php?endpoint=...` work.
 export const API_BASE = (() => {
-  const base = (import.meta && import.meta.env && import.meta.env.BASE_URL) || '/';
-  // If Vite injected a project subpath (e.g., '/capstone2/dist/'), use it
-  const fromBase = base.match(/^\/(.+?)\/dist\/$/);
-  if (fromBase) {
-    return `/${fromBase[1]}/api`;
-  }
-  // If base is './', derive project root from the current URL path
-  if (base === './' && typeof window !== 'undefined') {
-    const path = window.location.pathname || '/';
-    // e.g., '/capstone2/dist/' or '/capstone2/dist/index.html'
-    const m = path.match(/^(.*)\/dist(?:\/.+|\/)??$/);
-    if (m && m[1]) {
-      return `${m[1]}/api`;
-    }
-  }
-  // Fallback: root-level api
-  return '/api';
+  const isDev = ((typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV)
+    || (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')));
+  // In dev, route through Vite proxy -> Apache using /api; in production, routes go through root
+  return isDev ? '/api' : '';
 })();
+
+// Helper function to determine if we're in development or production
+const isDevelopment = () => {
+  const viteDev = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV);
+  const hostDev = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'));
+  return !!(viteDev || hostDev);
+};
+
+// Helper function to get the correct API endpoint format
+export const getApiEndpoint = (endpoint, params = {}) => {
+  if (isDevelopment()) {
+    // In development, use the Vite proxy to avoid CORS; this hits /capstone2/api on Apache
+    const baseUrl = `/api/${endpoint}.php`;
+    if (Object.keys(params).length === 0) {
+      return baseUrl;
+    }
+    const queryString = new URLSearchParams(params).toString();
+    return `${baseUrl}?${queryString}`;
+  } else {
+    // In production, use endpoint routing through root index.php
+    const baseUrl = `/index.php?endpoint=${endpoint}`;
+    if (Object.keys(params).length === 0) {
+      return baseUrl;
+    }
+    const queryString = new URLSearchParams(params).toString();
+    return `${baseUrl}&${queryString}`;
+  }
+};

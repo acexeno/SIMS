@@ -18,20 +18,51 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
   // get the user's role display text
   const getUserRoleDisplay = () => {
     if (!user?.roles) return 'User';
-    return user.roles.join(', ');
+    
+    // Handle both string and array formats
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    // Remove duplicates and join
+    const uniqueRoles = [...new Set(roleArray)];
+    return uniqueRoles.join(', ');
   };
 
   // pick the right color based on user role
   const getRoleColor = () => {
     if (!user?.roles) return 'bg-gray-500';
-    if (user.roles.includes('Super Admin')) return 'bg-red-500';
-    if (user.roles.includes('Admin')) return 'bg-purple-500';
-    if (user.roles.includes('Employee')) return 'bg-blue-500';
+    
+    // Use the same robust role extraction logic
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    if (roleArray.includes('Super Admin')) return 'bg-green-500';
+    if (roleArray.includes('Admin')) return 'bg-green-500';
+    if (roleArray.includes('Employee')) return 'bg-green-500';
     return 'bg-green-500';
   };
 
 
-  // Super Admin navigation tabs
+  // Debug: Log user roles
+  console.log('⚠️ ADMINSIDEBAR LOADED - This should NOT show for Super Admin users!');
+  console.log('AdminSidebar - User object:', user);
+  console.log('AdminSidebar - User roles:', user?.roles);
+  console.log('AdminSidebar - Is Super Admin:', user?.roles?.includes('Super Admin'));
+  console.log('AdminSidebar - Is Admin:', user?.roles?.includes('Admin'));
+  console.log('AdminSidebar - Admin condition result:', user?.roles?.includes('Admin') && !user?.roles?.includes('Super Admin'));
+  
+  // Force refresh if Super Admin user has Admin role (indicates old token)
+  if (user?.roles?.includes('Super Admin') && user?.roles?.includes('Admin')) {
+    console.warn('Super Admin user has both Super Admin and Admin roles - this indicates an old token. Please log out and log back in.');
+  }
+
+  // Super Admin navigation tabs (User management removed - Super Admin should not manage users)
   const superAdminTabs = [
     { id: 'dashboard', name: 'Dashboard', icon: <BarChart3 className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'notifications', name: 'Notifications', icon: <Bell className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
@@ -39,9 +70,7 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
     { id: 'inventory', name: 'Inventory', icon: <Package className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'orders-management', name: 'Orders', icon: <FileText className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
     { id: 'pc-assembly', name: 'PC Assembly', icon: <Cpu className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
-    { id: 'prebuilt-management', name: 'Prebuilt', icon: <Monitor className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
-    { id: 'admin-chat-support', name: 'Chat Support', icon: <MessageSquare className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> },
-    { id: 'user-management', name: 'User', icon: <Users className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> }
+    { id: 'prebuilt-management', name: 'Prebuilt', icon: <Monitor className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> }
   ];
 
   // Admin navigation tabs (no locks for Admin, only for Employee)
@@ -56,10 +85,11 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
     { id: 'admin-chat-support', name: 'Chat Support', icon: <MessageSquare className="mr-3 h-4 w-4 lg:h-5 lg:w-5" /> }
   ];
 
-  // Only apply locks if user is Employee
+  // Apply locks for both Admin and Employee (but not Super Admin)
   const adminTabsWithLocks = adminTabs.map(tab => {
     let isDisabled = false;
-    if (user?.roles?.includes('Employee')) {
+    // Check permissions for Admin and Employee users (Super Admin has unrestricted access)
+    if (!user?.roles?.includes('Super Admin')) {
       if (tab.id === 'inventory') {
         isDisabled = Number(user?.can_access_inventory) !== 1;
       } else if (tab.id === 'orders-management') {
@@ -174,16 +204,12 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
                 <button
                   key={tab.id}
                   onClick={() => {
-                    if (tab.id === 'admin-chat-support') {
-                      onPageChange(tab.id);
-                    } else {
-                      onSuperAdminTabChange(tab.id);
-                    }
+                    onSuperAdminTabChange(tab.id);
                   }}
                   className={`w-full flex items-center px-3 lg:px-5 py-2 text-xs lg:text-sm font-medium rounded-md transition-colors ${isCollapsed ? 'justify-center' : 'truncate'} ${
                     (currentPage === 'super-admin-dashboard' && activeSuperAdminTab === tab.id) || 
                     (currentPage === tab.id)
-                      ? 'bg-red-100 text-red-700'
+                      ? 'bg-green-100 text-green-700'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                   title={tab.name}
@@ -192,7 +218,7 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
                   {tab.icon}
                   {!isCollapsed && tab.name}
                   {!isCollapsed && tab.id === 'notifications' && (typeof notificationsCount !== 'undefined' && notificationsCount > 0) && (
-                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-green-600 rounded-full">
                       {notificationsCount}
                     </span>
                   )}
@@ -201,7 +227,13 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
             </>
           )}
 
-          {user?.roles?.includes('Admin') && !user?.roles?.includes('Super Admin') && (
+          {/* Admin navigation - only for Admin users who are NOT Super Admin */}
+          {(() => {
+            const isAdmin = user?.roles?.includes('Admin');
+            const isSuperAdmin = user?.roles?.includes('Super Admin');
+            console.log('AdminSidebar - isAdmin:', isAdmin, 'isSuperAdmin:', isSuperAdmin, 'shouldShowAdminNav:', isAdmin && !isSuperAdmin);
+            return isAdmin && !isSuperAdmin;
+          })() && (
             <>
               {!isCollapsed && (
                 <div className="pt-2 lg:pt-4 border-t border-gray-200">
@@ -210,22 +242,28 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
                   </h3>
                 </div>
               )}
-              {adminTabs.map(tab => (
+              {adminTabsWithLocks.map(tab => (
                 <button
                   key={tab.id}
-                  onClick={() => handleAdminNavigation(tab.id, false)}
+                  onClick={() => handleAdminNavigation(tab.id, tab.isDisabled)}
+                  disabled={tab.isDisabled}
                   className={`w-full flex items-center px-3 lg:px-5 py-2 text-xs lg:text-sm font-medium rounded-md transition-colors ${isCollapsed ? 'justify-center' : 'truncate'} ${
                     (tab.id === 'dashboard' && currentPage === 'admin-dashboard') || currentPage === tab.id
-                      ? 'bg-purple-100 text-purple-700'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      ? 'bg-green-100 text-green-700'
+                      : tab.isDisabled
+                        ? 'text-gray-400 cursor-not-allowed opacity-60 bg-gray-50 border border-gray-200'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
-                  title={tab.name}
+                  title={tab.isDisabled ? 'Access disabled by Super Admin' : tab.name}
                   aria-label={tab.name}
                 >
                   {tab.icon}
                   {!isCollapsed && <span className="flex-1 text-left">{tab.name}</span>}
+                  {!isCollapsed && tab.isDisabled && (
+                    <Lock className="ml-2 h-4 w-4 text-gray-400" />
+                  )}
                   {!isCollapsed && tab.id === 'notifications' && (typeof notificationsCount !== 'undefined' && notificationsCount > 0) && (
-                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-green-600 rounded-full">
                       {notificationsCount}
                     </span>
                   )}
@@ -250,7 +288,7 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
                   disabled={tab.isDisabled}
                   className={`w-full flex items-center px-3 lg:px-5 py-2 text-xs lg:text-sm font-medium rounded-md transition-colors ${isCollapsed ? 'justify-center' : 'truncate'} ${
                     (tab.id === 'dashboard' && currentPage === 'admin-dashboard') || currentPage === tab.id
-                      ? 'bg-blue-100 text-blue-700'
+                      ? 'bg-green-100 text-green-700'
                       : tab.isDisabled
                         ? 'text-gray-400 cursor-not-allowed opacity-60 bg-gray-50 border border-gray-200'
                         : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
@@ -264,7 +302,7 @@ const AdminSidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminT
                     <Lock className="ml-2 h-4 w-4 text-gray-400" />
                   )}
                   {!isCollapsed && tab.id === 'notifications' && (typeof notificationsCount !== 'undefined' && notificationsCount > 0) && (
-                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                    <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-green-600 rounded-full">
                       {notificationsCount}
                     </span>
                   )}

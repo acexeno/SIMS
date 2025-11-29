@@ -7,6 +7,11 @@
 
 // Operational note: error reporting, DB connection ($pdo), and JWT helpers are provided by the main router.
 
+// Include reCAPTCHA helper if it exists
+if (file_exists(__DIR__ . '/../utils/recaptcha_helper.php')) {
+    require_once __DIR__ . '/../utils/recaptcha_helper.php';
+}
+
 /**
  * Handle user registration with OTP verification and initial role assignment.
  * Input: JSON or form body with username, email, password, first_name, last_name, optional phone/country, and otp_code.
@@ -30,6 +35,16 @@ function handleRegister($pdo) {
     }
     if (empty($input) && !empty($_POST)) {
         $input = $_POST;
+    }
+    
+    // Verify reCAPTCHA if token is provided
+    if (function_exists('validateRecaptcha')) {
+        $recaptchaValid = validateRecaptcha($input);
+        if (!$recaptchaValid) {
+            http_response_code(403);
+            echo json_encode(['error' => 'reCAPTCHA verification failed. Please try again.']);
+            return;
+        }
     }
     
     // Validate required fields early to provide targeted feedback
@@ -103,11 +118,23 @@ function handleRegister($pdo) {
 
     if (!$isAdminOverride) {
         try {
+            // Primary lookup: OTP specifically issued for registration
             $stmt = $pdo->prepare("SELECT id, code, expires_at, consumed_at FROM otp_codes
                                    WHERE email = ? AND purpose = 'register' AND consumed_at IS NULL AND expires_at >= NOW()
                                    ORDER BY id DESC LIMIT 1");
             $stmt->execute([$input['email']]);
             $row = $stmt->fetch();
+
+            // Fallback: support legacy OTP rows saved with a generic/login purpose
+            // This avoids \"Invalid or expired\" errors on hosts still using older otp.php logic,
+            // while still requiring a recent, unconsumed code for the same email.
+            if (!$row) {
+                $stmt = $pdo->prepare("SELECT id, code, expires_at, consumed_at FROM otp_codes
+                                       WHERE email = ? AND purpose IN ('login', 'login_verify') AND consumed_at IS NULL AND expires_at >= NOW()
+                                       ORDER BY id DESC LIMIT 1");
+                $stmt->execute([$input['email']]);
+                $row = $stmt->fetch();
+            }
 
             if (!$row || !hash_equals($row['code'], $otpCode)) {
                 // Increment attempt count for telemetry; do not leak validity details
@@ -131,11 +158,29 @@ function handleRegister($pdo) {
     }
 
     // Block duplicate username or email
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
-    $stmt->execute([$input['username'], $input['email']]);
-    if ($stmt->fetch()) {
+    // Check username
+    $stmt = $pdo->prepare("SELECT id, username FROM users WHERE username = ?");
+    $stmt->execute([$input['username']]);
+    $existingUser = $stmt->fetch();
+    if ($existingUser) {
         http_response_code(409);
-        echo json_encode(['error' => 'Username or email already exists']);
+        echo json_encode([
+            'error' => 'Username already exists',
+            'details' => "The username '{$input['username']}' is already taken. Please choose a different username."
+        ]);
+        return;
+    }
+    
+    // Check email
+    $stmt = $pdo->prepare("SELECT id, email FROM users WHERE email = ?");
+    $stmt->execute([$input['email']]);
+    $existingEmail = $stmt->fetch();
+    if ($existingEmail) {
+        http_response_code(409);
+        echo json_encode([
+            'error' => 'Email already exists',
+            'details' => "The email '{$input['email']}' is already registered. Please use a different email address."
+        ]);
         return;
     }
     
@@ -150,37 +195,98 @@ function handleRegister($pdo) {
     // Store password using strong, auto-upgrading hash
     $passwordHash = password_hash($input['password'], PASSWORD_DEFAULT);
     
-    // Insert user record
-    $stmt = $pdo->prepare("
-        INSERT INTO users (username, email, password_hash, first_name, last_name, phone, country) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ");
+    // Determine if this is admin-created user
+    // For Client users, explicitly disable inventory/orders/chat access
+    $isAdminOverride = ($otpCode === 'ADMIN_OVERRIDE');
     
-    $stmt->execute([
-        $input['username'],
-        $input['email'],
-        $passwordHash,
-        $input['first_name'],
-        $input['last_name'],
-        $input['phone'] ?? null,
-        $input['country'] ?? 'Philippines'
-    ]);
+    // Get the role to assign (Admin or Employee) if provided and valid
+    $requestedRole = isset($input['role']) ? trim((string)$input['role']) : '';
+    $validRoles = ['Admin', 'Employee'];
+    $roleToAssign = 'Client'; // Default role
+    $isAdminOrEmployee = false;
     
-    $userId = $pdo->lastInsertId();
-    
-    // Assign default role: Client
-    $stmt = $pdo->prepare("SELECT id FROM roles WHERE name = 'Client'");
-    $stmt->execute();
-    $role = $stmt->fetch();
-    
-    if ($role) {
-        $stmt = $pdo->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)");
-        $stmt->execute([$userId, $role['id']]);
+    // If ADMIN_OVERRIDE is used and a valid role is provided, assign that role instead of Client
+    if ($isAdminOverride && in_array($requestedRole, $validRoles, true)) {
+        $roleToAssign = $requestedRole;
+        $isAdminOrEmployee = true;
     }
     
-    // Issue tokens for immediate sign-in
-    $token = generateJWT($userId, $input['username'], ['Client']);
-    $refreshToken = generateRefreshJWT($userId, $input['username'], ['Client']);
+    // Insert user record with explicit is_active=1 and proper permissions
+    // Clients should NOT have inventory/orders/chat access by default
+    // Admin/Employee users should have access by default
+    $canAccessInventory = ($isAdminOverride && $isAdminOrEmployee) ? 1 : 0;
+    $canAccessOrders = ($isAdminOverride && $isAdminOrEmployee) ? 1 : 0;
+    $canAccessChat = ($isAdminOverride && $isAdminOrEmployee) ? 1 : 0;
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO users (username, email, password_hash, first_name, last_name, phone, country, is_active, can_access_inventory, can_access_orders, can_access_chat_support) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        ");
+        
+        $stmt->execute([
+            $input['username'],
+            $input['email'],
+            $passwordHash,
+            $input['first_name'],
+            $input['last_name'],
+            $input['phone'] ?? null,
+            $input['country'] ?? 'Philippines',
+            $canAccessInventory,
+            $canAccessOrders,
+            $canAccessChat
+        ]);
+        
+        $userId = $pdo->lastInsertId();
+        
+        if (!$userId) {
+            throw new Exception('Failed to create user record');
+        }
+        
+        // Assign the appropriate role
+        // Verify role exists before assignment, create if it doesn't exist
+        $stmt = $pdo->prepare("SELECT id FROM roles WHERE name = ?");
+        $stmt->execute([$roleToAssign]);
+        $role = $stmt->fetch();
+        
+        if (!$role) {
+            // Create role if it doesn't exist
+            $stmt = $pdo->prepare("INSERT INTO roles (name) VALUES (?)");
+            $stmt->execute([$roleToAssign]);
+            $roleId = $pdo->lastInsertId();
+            if (!$roleId) {
+                throw new Exception('Failed to create role');
+            }
+        } else {
+            $roleId = $role['id'];
+        }
+        
+        // Assign the role
+        $stmt = $pdo->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)");
+        $stmt->execute([$userId, $roleId]);
+        
+        // Also update the role column in users table for consistency with phpMyAdmin display
+        // This ensures the role column matches the assigned role in user_roles table
+        try {
+            $stmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+            $stmt->execute([$roleToAssign, $userId]);
+        } catch (Exception $roleUpdateException) {
+            // If role column doesn't exist or update fails, log but don't break user creation
+            // The user_roles table assignment above is the primary role storage
+            error_log("Warning: Could not update users.role column: " . $roleUpdateException->getMessage());
+        }
+        
+    } catch (Exception $e) {
+        error_log("User registration error: " . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to create user account', 'details' => $e->getMessage()]);
+        return;
+    }
+    
+    // Issue tokens for immediate sign-in with the correct role
+    $assignedRoles = [$roleToAssign];
+    $token = generateJWT($userId, $input['username'], $assignedRoles);
+    $refreshToken = generateRefreshJWT($userId, $input['username'], $assignedRoles);
     
     echo json_encode([
         'success' => true,
@@ -193,7 +299,7 @@ function handleRegister($pdo) {
             'email' => $input['email'],
             'first_name' => $input['first_name'],
             'last_name' => $input['last_name'],
-            'roles' => ['Client']
+            'roles' => $assignedRoles
         ]
     ]);
 }
@@ -209,6 +315,16 @@ function handleLogin($pdo) {
         http_response_code(400);
         echo json_encode(['error' => 'Username and password are required']);
         return;
+    }
+    
+    // Verify reCAPTCHA if token is provided
+    if (function_exists('validateRecaptcha')) {
+        $recaptchaValid = validateRecaptcha($input);
+        if (!$recaptchaValid) {
+            http_response_code(403);
+            echo json_encode(['error' => 'reCAPTCHA verification failed. Please try again.']);
+            return;
+        }
     }
     
     $username = sanitizeInput($input['username'], 'string');
@@ -254,6 +370,9 @@ function handleLogin($pdo) {
             echo json_encode(['error' => 'Account is deactivated']);
             return;
         }
+    } else {
+        // Password verification failed or user not found
+        $loginSuccess = false;
     }
     
     // Persist login attempt outcome for auditing and rate limits
@@ -266,35 +385,64 @@ function handleLogin($pdo) {
         return;
     }
     
-    // Audit successful login
-    logSecurityEvent($pdo, 'login_success', "Successful login for: $username", $user['id'], $ipAddress);
+    // Audit successful password verification (not full login yet - OTP required)
+    logSecurityEvent($pdo, 'login_password_verified', "Password verified for: $username", $user['id'], $ipAddress);
     
-    // Persist last login timestamp
-    $stmt = $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
-    $stmt->execute([$user['id']]);
+    // Check if OTP helper function is available (from otp.php)
+    if (!function_exists('sendLoginVerificationOtp')) {
+        // Fallback: if OTP system not available, issue tokens directly (backward compatibility)
+        $roles = $user['roles'] ? explode(',', $user['roles']) : [];
+        $token = generateJWT($user['id'], $user['username'], $roles);
+        $refreshToken = generateRefreshJWT($user['id'], $user['username'], $roles);
+        
+        // Persist last login timestamp
+        $stmt = $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
+        $stmt->execute([$user['id']]);
+        
+        logSecurityEvent($pdo, 'login_success', "Successful login for: $username", $user['id'], $ipAddress);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Login successful',
+            'token' => $token,
+            'refresh_token' => $refreshToken,
+            'user' => [
+                'id' => $user['id'],
+                'username' => $user['username'],
+                'email' => $user['email'],
+                'first_name' => $user['first_name'],
+                'last_name' => $user['last_name'],
+                'roles' => $roles,
+                'profile_image' => $user['profile_image'],
+                'last_login' => $user['last_login']
+            ]
+        ]);
+        return;
+    }
     
-    // Materialize role list
-    $roles = $user['roles'] ? explode(',', $user['roles']) : [];
+    // Send OTP for verification
+    [$otpSuccess, $otpError, $otpData] = sendLoginVerificationOtp($pdo, $user['id'], $user['email'], $ipAddress);
     
-    // Issue fresh tokens
-    $token = generateJWT($user['id'], $user['username'], $roles);
-    $refreshToken = generateRefreshJWT($user['id'], $user['username'], $roles);
+    if (!$otpSuccess) {
+        // If OTP send fails, log error but don't block login (could be email issue)
+        // For now, we'll return error - in production you might want to allow fallback
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => $otpError ?: 'Failed to send verification code. Please try again.',
+            'requires_otp' => true
+        ]);
+        return;
+    }
     
+    // Return success with OTP sent message (no tokens yet)
     echo json_encode([
         'success' => true,
-        'message' => 'Login successful',
-        'token' => $token,
-        'refresh_token' => $refreshToken,
-        'user' => [
-            'id' => $user['id'],
-            'username' => $user['username'],
-            'email' => $user['email'],
-            'first_name' => $user['first_name'],
-            'last_name' => $user['last_name'],
-            'roles' => $roles,
-            'profile_image' => $user['profile_image'],
-            'last_login' => $user['last_login']
-        ]
+        'message' => 'Verification code sent to your email. Please check your inbox.',
+        'requires_otp' => true,
+        'email' => $user['email'], // Return email for frontend to use in OTP verification
+        'ttl_minutes' => $otpData['ttl_minutes'] ?? 5,
+        'cooldown_seconds' => $otpData['cooldown_seconds'] ?? 60
     ]);
 }
 
@@ -352,9 +500,9 @@ function handleGetProfile($pdo) {
             'created_at' => $user['created_at'],
             'last_login' => $user['last_login'],
             'roles' => $roles,
-            'can_access_inventory' => 1,
-            'can_access_orders' => 1,
-            'can_access_chat_support' => 1
+            'can_access_inventory' => isset($user['can_access_inventory']) ? (int)$user['can_access_inventory'] : 1,
+            'can_access_orders' => isset($user['can_access_orders']) ? (int)$user['can_access_orders'] : 1,
+            'can_access_chat_support' => isset($user['can_access_chat_support']) ? (int)$user['can_access_chat_support'] : 1
         ]
     ]);
 }
@@ -442,9 +590,11 @@ function handleChangePassword($pdo) {
         return;
     }
     
-    if (strlen($input['new_password']) < 6) {
+    // Validate new password strength using security configuration
+    $passwordErrors = validatePasswordStrength($input['new_password']);
+    if (!empty($passwordErrors)) {
         http_response_code(400);
-        echo json_encode(['error' => 'New password must be at least 6 characters long']);
+        echo json_encode(['error' => 'New password does not meet requirements', 'details' => $passwordErrors]);
         return;
     }
     
@@ -589,64 +739,7 @@ function handleRefreshToken($pdo) {
     ]);
 }
 
-/**
- * Resolve Bearer token from multiple sources with retry-friendly priority.
- * Priority: query ?token= > Authorization > REDIRECT_HTTP_AUTHORIZATION > getallheaders > X-Auth-Token > JSON body.
- */
-function getBearerToken() {
-    // CRITICAL FIX: Prioritize query parameter for retry scenarios where frontend sends fresh token
-    // This ensures that when frontend retries with a new token, we use the new one, not cached headers
-    
-    // 1) Query parameter (highest priority for frontend retries)
-    if (isset($_GET['token']) && !empty($_GET['token'])) {
-        $token = trim($_GET['token']);
-        if (!empty($token)) {
-            return $token;
-        }
-    }
-
-    // 2) Standard Authorization header
-    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
-    if ($authHeader && preg_match('/Bearer\s+(\S+)/i', $authHeader, $m)) {
-        return $m[1];
-    }
-
-    // 3) Apache forward header
-    $redirAuth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
-    if ($redirAuth && preg_match('/Bearer\s+(\S+)/i', $redirAuth, $m)) {
-        return $m[1];
-    }
-
-    // 4) Fallback to getallheaders() (case-insensitive)
-    if (function_exists('getallheaders')) {
-        $headers = getallheaders();
-        if (is_array($headers)) {
-            foreach ($headers as $key => $val) {
-                if (strcasecmp($key, 'Authorization') === 0) {
-                    if (preg_match('/Bearer\s+(\S+)/i', $val, $m)) {
-                        return $m[1];
-                    } elseif (trim($val) !== '') {
-                        return trim(preg_replace('/^Bearer\s+/i', '', $val));
-                    }
-                }
-            }
-        }
-    }
-
-    // 5) Custom header fallback
-    $xAuthToken = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? null;
-    if ($xAuthToken) {
-        return $xAuthToken;
-    }
-
-    // 6) JSON body field { "token": "..." }
-    $input = json_decode(file_get_contents('php://input'), true);
-    if (is_array($input) && isset($input['token']) && !empty($input['token'])) {
-        return $input['token'];
-    }
-
-    return null;
-}
+// getBearerToken() function is now defined in jwt_helper.php
 
 /**
  * Super Admin: toggle `can_access_inventory` for a user.

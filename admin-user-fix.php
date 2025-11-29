@@ -65,18 +65,18 @@ $stmt->execute([$adminUsername, $adminEmail]);
 $existingUser = $stmt->fetch();
 
 if ($existingUser) {
-    // Update existing user
+    // Update existing user - ensure permissions are enabled for Admin role
     $passwordHash = password_hash($adminPassword, PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?");
+    $stmt = $pdo->prepare("UPDATE users SET password_hash = ?, is_active = 1, can_access_inventory = 1, can_access_orders = 1, can_access_chat_support = 1 WHERE id = ?");
     $stmt->execute([$passwordHash, $existingUser['id']]);
     echo "✅ Updated existing admin user (ID: {$existingUser['id']})\n";
     $userId = $existingUser['id'];
 } else {
-    // Create new user
+    // Create new user with Admin permissions enabled
     $passwordHash = password_hash($adminPassword, PASSWORD_DEFAULT);
     $stmt = $pdo->prepare("
-        INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, 1, NOW())
+        INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, can_access_inventory, can_access_orders, can_access_chat_support, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, 1, 1, 1, NOW())
     ");
     $stmt->execute([$adminUsername, $adminEmail, $passwordHash, $adminFirstName, $adminLastName]);
     $userId = $pdo->lastInsertId();
@@ -109,6 +109,17 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$userId, $roleId]);
 echo "✅ Assigned Admin role to user\n";
+
+// Ensure permissions are enabled for Admin role
+$stmt = $pdo->prepare("
+    UPDATE users 
+    SET can_access_inventory = 1, 
+        can_access_orders = 1, 
+        can_access_chat_support = 1 
+    WHERE id = ?
+");
+$stmt->execute([$userId]);
+echo "✅ Enabled access permissions for Admin user\n";
 
 echo "\n5. Testing authentication...\n";
 

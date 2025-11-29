@@ -82,12 +82,25 @@ const FloatingChatButton = ({ user, setCurrentPage }) => {
           </div>
 
           {/* Chat Content */}
-          <div className="flex-1 overflow-hidden min-h-0">
+          <div className="flex-1 overflow-hidden min-h-0 flex flex-col" style={{ height: 'calc(500px - 60px)' }}>
             <DynamicChatAccess 
               user={user} 
               customStyles={{
-                messagesArea: 'p-4',
-                inputArea: 'bg-gray-50'
+                containerClass: 'h-full flex flex-col',
+                messagesWrapperClass: 'flex-shrink-0',
+                messagesAreaClass: '',
+                messagesMaxHeight: '280px',
+                messagesAreaStyle: { 
+                  height: '280px',
+                  maxHeight: '280px',
+                  minHeight: '280px',
+                  overflowY: 'scroll',
+                  overflowX: 'hidden',
+                  display: 'block',
+                  flexShrink: 0
+                },
+                suggestionListClass: 'pb-4',
+                inputAreaClass: 'bg-gray-50 flex-shrink-0',
               }}
               hideHeader={true}
             />

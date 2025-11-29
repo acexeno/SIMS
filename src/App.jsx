@@ -7,15 +7,18 @@ import { API_BASE } from './utils/apiBase'
 import { ensureValidToken, authorizedFetch } from './utils/auth'
 import Sidebar from './components/Sidebar'
 import AdminSidebar from './components/AdminSidebar'
+import SuperAdminSidebar from './components/SuperAdminSidebar'
 import EmployeeSidebar from './components/EmployeeSidebar'
 import TopNavigation from './components/TopNavigation'
 import Home from './pages/Home'
 import PCAssembly from './pages/PCAssembly'
 import AdminPCAssembly from './pages/AdminPCAssembly'
 import EmployeePCAssembly from './pages/EmployeePCAssembly'
+import SuperAdminPCAssembly from './pages/SuperAdminPCAssembly'
 import DynamicChatAccess from './components/DynamicChatAccess'
 import MyBuilds from './pages/MyBuilds'
 import MyOrders from './pages/MyOrders'
+import Cart from './pages/Cart'
 import PrebuiltPCs from './pages/PrebuiltPCs'
 import Notifications from './pages/Notifications'
 import AdminDashboard from './pages/AdminDashboard'
@@ -29,6 +32,7 @@ import CompatibilityGuide from './pages/CompatibilityGuide'
 import Troubleshooting from './pages/Troubleshooting'
 import Login from './components/auth/Login'
 import Register from './components/auth/Register'
+import ResetPassword from './components/auth/ResetPassword'
 import { NotificationProvider } from './contexts/NotificationContext'
 import NotificationManager from './components/NotificationManager'
 
@@ -36,7 +40,7 @@ import FloatingChatButton from './components/FloatingChatButton';
 import './App.css'
 
 // Protected pages require user session
-const PROTECTED_PAGES = ['my-builds', 'my-orders', 'notifications']
+const PROTECTED_PAGES = ['my-builds', 'my-orders', 'notifications', 'cart']
 
 // Parse token locally to decide initial route; network verification follows
 function isTokenExpired(token) {
@@ -61,6 +65,12 @@ if (token && isTokenExpired(token)) {
 }
 
 const AppContent = () => {
+  // Debug: Test console logging
+  useEffect(() => {
+    console.log('[App] AppContent component mounted!');
+    console.log('[App] Testing environment variable:', import.meta.env.VITE_RECAPTCHA_SITE_KEY ? 'SET' : 'NOT SET');
+  }, []);
+
   // figure out which page to show first based on user role (admins and employees go to their dashboards)
   const getInitialPage = () => {
     const token = localStorage.getItem('token');
@@ -87,7 +97,7 @@ const AppContent = () => {
   const [selectedComponents, _setSelectedComponents] = useState({})
   const [prebuiltComponentIds, setPrebuiltComponentIds] = useState(null)
   const [user, setUser] = useState(null)
-  const [showAuth, setShowAuth] = useState(null) // null, 'login', 'register'
+  const [showAuth, setShowAuth] = useState(null) // null, 'login', 'register', 'reset-password'
   const [isLoading, setIsLoading] = useState(true)
   const [superAdminTab, setSuperAdminTab] = useState('dashboard');
   // User preference for collapsing (persisted)
@@ -129,6 +139,16 @@ const AppContent = () => {
   useEffect(() => {
     const verifyToken = async () => {
       try {
+        // Check for reset password URL first
+        const urlParams = new URLSearchParams(window.location.search)
+        const resetToken = urlParams.get('token')
+        if (resetToken) {
+          setShowAuth('reset-password')
+          setCurrentPage('reset-password')
+          setIsLoading(false)
+          return
+        }
+        
         // Only attempt refresh if an access token already exists.
         // This prevents silent sign-in using refresh_token on page reload.
         const existing = localStorage.getItem('token')
@@ -202,13 +222,13 @@ const AppContent = () => {
     if (!user && PROTECTED_PAGES.includes(page)) {
       setCurrentPage(page)
       setShowAuth('login')
-    } else if (page === 'login' || page === 'register') {
+    } else if (page === 'login' || page === 'register' || page === 'reset-password') {
       setCurrentPage(page)
       setShowAuth(page)
-    } else if (page === 'admin-dashboard' && user?.roles?.includes('Admin')) {
+    } else if (page === 'admin-dashboard' && hasRoles.includes('Admin')) {
       setCurrentPage('admin-dashboard');
       setShowAuth(null);
-    } else if (page === 'employee-dashboard' && user?.roles?.includes('Employee')) {
+    } else if (page === 'employee-dashboard' && hasRoles.includes('Employee')) {
       setCurrentPage('employee-dashboard');
       setShowAuth(null);
     } else {
@@ -265,23 +285,40 @@ const AppContent = () => {
   const getUserDashboard = () => {
     if (!user?.roles) return null
     
-    if (user.roles.includes('Super Admin')) {
+    // Handle both string and array formats for roles
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    if (roleArray.includes('Super Admin')) {
       return 'super-admin-dashboard'
-    } else if (user.roles.includes('Admin')) {
+    } else if (roleArray.includes('Admin')) {
       return 'admin-dashboard'
-    } else if (user.roles.includes('Employee')) {
+    } else if (roleArray.includes('Employee')) {
       return 'employee-dashboard'
     }
     return null
   }
 
   // Determine whether we are on an admin/employee area page vs public storefront pages
-  const hasRoles = Array.isArray(user?.roles) ? user.roles : []
+  const hasRoles = Array.isArray(user?.roles)
+    ? user.roles
+    : typeof user?.roles === 'string'
+      ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+      : [];
   const isSuperAdmin = hasRoles.includes('Super Admin')
   const isAdmin = hasRoles.includes('Admin')
   const isEmployee = hasRoles.includes('Employee')
   const isAdminOrEmployee = isSuperAdmin || isAdmin || isEmployee
-  const ADMIN_PAGES = new Set(['super-admin-dashboard','admin-dashboard','prebuilt-management','sales-reports','system-reports','notifications','inventory','orders-management','admin-chat-support','pc-assembly'])
+  
+  // Helper function to check if user has any of the specified roles
+  const hasAnyRole = (rolesToCheck) => {
+    return rolesToCheck.some(role => hasRoles.includes(role));
+  };
+  
+  const ADMIN_PAGES = new Set(['super-admin-dashboard','admin-dashboard','prebuilt-management','sales-reports','system-reports','notifications','inventory','orders-management','pc-assembly','admin-chat-support','user-management'])
   const EMPLOYEE_PAGES = new Set(['employee-dashboard','inventory','orders-management','prebuilt-management','sales-reports','system-reports','notifications','admin-chat-support','pc-assembly'])
   const isAdminAreaPage = (
     ((isSuperAdmin || isAdmin) && ADMIN_PAGES.has(currentPage)) ||
@@ -309,8 +346,25 @@ const AppContent = () => {
           {/* Admin/Employee sidebars visible only on admin area pages */}
           {(isAdminOrEmployee && isAdminAreaPage) ? (
             <div className={`grid ${isSidebarCollapsed ? 'grid-cols-[88px_1fr] md:grid-cols-[88px_1fr] xl:grid-cols-[104px_1fr]' : 'grid-cols-[288px_1fr] md:grid-cols-[288px_1fr] xl:grid-cols-[320px_1fr]'} h-screen w-full`}>
-              {/* sidebar for admin users */}
-              {(user?.roles?.includes('Super Admin') || user?.roles?.includes('Admin')) && (
+              {/* sidebar for Super Admin users */}
+              {hasRoles.includes('Super Admin') && (
+                <>
+                  {console.log('🎯 APP.JSX - Using SuperAdminSidebar for Super Admin user!')}
+                  <SuperAdminSidebar
+                    currentPage={currentPage}
+                    onPageChange={handlePageChange}
+                    user={user}
+                    onLogout={handleLogout}
+                    onSuperAdminTabChange={handleSuperAdminTabChange}
+                    activeSuperAdminTab={currentPage === 'super-admin-dashboard' ? superAdminTab : undefined}
+                    isCollapsed={isSidebarCollapsed}
+                    onToggleCollapse={() => setIsUserSidebarCollapsed(prev => !prev)}
+                  />
+                </>
+              )}
+              
+              {/* sidebar for Admin users (not Super Admin) */}
+              {hasRoles.includes('Admin') && !hasRoles.includes('Super Admin') && (
                 <AdminSidebar
                   currentPage={currentPage}
                   onPageChange={handlePageChange}
@@ -324,7 +378,7 @@ const AppContent = () => {
               )}
               
               {/* sidebar for employee users */}
-              {user?.roles?.includes('Employee') && !user?.roles?.includes('Admin') && !user?.roles?.includes('Super Admin') && (
+              {hasRoles.includes('Employee') && !hasRoles.includes('Admin') && !hasRoles.includes('Super Admin') && (
                 <EmployeeSidebar
                   currentPage={currentPage}
                   onPageChange={(page) => {
@@ -371,11 +425,16 @@ const AppContent = () => {
                 }
                 setShowAuth(null);
                 // figure out which dashboard to show based on user role
-                if (u?.roles?.includes('Super Admin')) {
+                const userRoleArray = Array.isArray(u?.roles)
+                  ? u.roles
+                  : typeof u?.roles === 'string'
+                    ? u.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+                    : [];
+                if (userRoleArray.includes('Super Admin')) {
                   setCurrentPage('super-admin-dashboard');
-                } else if (u?.roles?.includes('Admin')) {
+                } else if (userRoleArray.includes('Admin')) {
                   setCurrentPage('admin-dashboard');
-                } else if (u?.roles?.includes('Employee')) {
+                } else if (userRoleArray.includes('Employee')) {
                   setCurrentPage('employee-dashboard');
                 } else {
                   setCurrentPage('home');
@@ -385,23 +444,26 @@ const AppContent = () => {
             {showAuth === 'register' && (
               <Register onRegister={() => { setShowAuth('login'); setCurrentPage('login'); }} onSwitchToLogin={() => { setShowAuth('login'); setCurrentPage('login'); }} />
             )}
+            {showAuth === 'reset-password' && (
+              <ResetPassword onSuccess={() => { setShowAuth('login'); setCurrentPage('login'); }} />
+            )}
             {/* main content area - only show when not logging in/registering */}
             {!showAuth && (
               <>
                 {/* show different dashboards based on user role */}
-                {currentPage === 'super-admin-dashboard' && user?.roles?.includes('Super Admin') && (
+                {currentPage === 'super-admin-dashboard' && hasRoles.includes('Super Admin') && (
                   <SuperAdminDashboard initialTab={superAdminTab} user={user} setUser={setUser} />
                 )}
-                {currentPage === 'admin-dashboard' && user?.roles?.includes('Admin') && (
+                {currentPage === 'admin-dashboard' && hasRoles.includes('Admin') && (
                   <AdminDashboard user={user} />
                 )}
-                {currentPage === 'sales-reports' && user?.roles?.includes('Admin') && (
+                {currentPage === 'sales-reports' && hasRoles.includes('Admin') && (
                   <AdminDashboard initialTab="sales-reports" user={user} />
                 )}
-                {currentPage === 'system-reports' && user?.roles?.includes('Admin') && (
+                {currentPage === 'system-reports' && hasRoles.includes('Admin') && (
                   <AdminDashboard initialTab="system-reports" user={user} />
                 )}
-                {currentPage === 'notifications' && user?.roles?.includes('Admin') && (
+                {currentPage === 'notifications' && hasRoles.includes('Admin') && (
                   <AdminDashboard initialTab="notifications" user={user} />
                 )}
                 {currentPage === 'inventory' && user?.roles?.includes('Admin') && (
@@ -425,7 +487,18 @@ const AppContent = () => {
                   <PrebuiltPCs user={user} setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} onPrebuiltSelect={handlePrebuiltSelect} />
                 )}
                 {currentPage === 'pc-assembly' && user?.roles?.includes('Super Admin') && (
-                  <SuperAdminDashboard initialTab="pc-assembly" user={user} setUser={setUser} />
+                  <SuperAdminPCAssembly 
+                    setCurrentPage={setCurrentPage}
+                    setSelectedComponents={setSelectedComponents} 
+                    selectedComponents={prebuiltComponentIds || selectedComponents} 
+                    onLoaded={handlePCAssemblyLoaded}
+                    user={user}
+                    setUser={setUser}
+                    onShowAuth={(authType) => {
+                      setShowAuth(authType)
+                      setCurrentPage(authType)
+                    }}
+                  />
                 )}
                 {currentPage === 'pc-assembly' && user?.roles?.includes('Admin') && (
                   <AdminPCAssembly 
@@ -455,7 +528,7 @@ const AppContent = () => {
                     }}
                   />
                 )}
-                {currentPage === 'pc-assembly' && (!user?.roles || (!user.roles.includes('Super Admin') && !user.roles.includes('Admin') && !user.roles.includes('Employee'))) && (
+                {currentPage === 'pc-assembly' && (!user?.roles || !hasAnyRole(['Super Admin', 'Admin', 'Employee'])) && (
                   <PCAssembly 
                     setCurrentPage={setCurrentPage}
                     setSelectedComponents={setSelectedComponents} 
@@ -469,14 +542,14 @@ const AppContent = () => {
                     }}
                   />
                 )}
-                {currentPage === 'chat-support' && <DynamicChatAccess user={user} fullScreen={true} />}
+                {currentPage === 'chat-support' && (user?.roles?.includes('Admin') || user?.roles?.includes('Employee')) && <DynamicChatAccess user={user} fullScreen={true} />}
                 {currentPage === 'scroll-test' && <ScrollTestPage />}
                 {currentPage === 'about' && <About setCurrentPage={setCurrentPage} />}
                 {currentPage === 'contact' && <Contact setCurrentPage={setCurrentPage} />}
                 {currentPage === 'faq' && <FAQ setCurrentPage={setCurrentPage} />}
                 {currentPage === 'compatibility-guide' && <CompatibilityGuide setCurrentPage={setCurrentPage} />}
                 {currentPage === 'troubleshooting' && <Troubleshooting setCurrentPage={setCurrentPage} />}
-                {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} />}
+                {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} user={user} />}
                 {currentPage === 'my-builds' && !user && (
                   <div className="flex items-center justify-center h-64">
                     <div className="text-center">
@@ -490,9 +563,32 @@ const AppContent = () => {
                   </div>
                 )}
                 {currentPage === 'my-orders' && user && <MyOrders setCurrentPage={setCurrentPage} />}
+                {currentPage === 'cart' && user && <Cart setCurrentPage={setCurrentPage} user={user} onShowAuth={() => { setShowAuth('login'); setCurrentPage('login'); }} />}
+                {currentPage === 'cart' && !user && (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-center">
+                      <h3 className="text-xl font-semibold text-gray-800 mb-2">Sign in required</h3>
+                      <p className="text-gray-600 mb-4">Log in to view and manage your cart.</p>
+                      <div className="flex items-center gap-2 justify-center">
+                        <button onClick={() => { setShowAuth('login'); setCurrentPage('login'); }} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">Login</button>
+                        <button onClick={() => { setShowAuth('register'); setCurrentPage('register'); }} className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md">Register</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {currentPage === 'notifications' && user && !user?.roles?.includes('Admin') && !user?.roles?.includes('Employee') && <Notifications user={user} />}
-                {currentPage === 'admin-chat-support' && (user?.roles?.includes('Admin') || user?.roles?.includes('Super Admin') || user?.roles?.includes('Employee')) && (
-                  <DynamicChatAccess user={user} fullScreen={true} />
+                {currentPage === 'admin-chat-support' && (user?.roles?.includes('Super Admin') || user?.roles?.includes('Admin') || user?.roles?.includes('Employee')) && (
+                  // Super Admin has full access, no permission check needed
+                  user?.roles?.includes('Super Admin') ? (
+                    <DynamicChatAccess user={user} fullScreen={true} />
+                  ) : (
+                    user.can_access_chat_support === 0 || user.can_access_chat_support === '0' || user.can_access_chat_support === false || user.can_access_chat_support === 'false' ? (
+                      <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-6 py-4 rounded-2xl text-center max-w-lg mx-auto mt-24">
+                        <h2 className="text-2xl font-bold mb-2">Chat Support Access Disabled</h2>
+                        <p className="text-lg">Your access to Chat Support Management has been disabled by a Super Admin. If you believe this is a mistake, please contact your administrator.</p>
+                      </div>
+                    ) : <DynamicChatAccess user={user} fullScreen={true} />
+                  )
                 )}
                 
                 {/* SupplierManagement temporarily disabled */}
@@ -502,16 +598,8 @@ const AppContent = () => {
                   <SuperAdminDashboard initialTab={currentPage} user={user} setUser={setUser} />
                 )}
                 {['inventory', 'orders-management', 'prebuilt-management', 'sales-reports', 'system-reports', 'notifications'].includes(currentPage) && user?.roles?.includes('Employee') && (
-                  // Check permissions before routing to specific tabs
-                  (() => {
-                    if (currentPage === 'inventory' && (user?.can_access_inventory === 0 || user?.can_access_inventory === '0' || user?.can_access_inventory === false || user?.can_access_inventory === 'false')) {
-                      return <EmployeeDashboard initialTab="employee-dashboard" user={user} setUser={setUser} />;
-                    }
-                    if (currentPage === 'orders-management' && (user?.can_access_orders === 0 || user?.can_access_orders === '0' || user?.can_access_orders === false || user?.can_access_orders === 'false')) {
-                      return <EmployeeDashboard initialTab="employee-dashboard" user={user} setUser={setUser} />;
-                    }
-                    return <EmployeeDashboard initialTab={currentPage} user={user} setUser={setUser} />;
-                  })()
+                  // EmployeeDashboard now handles permission checks internally
+                  <EmployeeDashboard initialTab={currentPage} user={user} setUser={setUser} />
                 )}
 
                 {/* super admin only pages */}
@@ -570,6 +658,9 @@ const AppContent = () => {
               {showAuth === 'register' && (
                 <Register onRegister={() => { setShowAuth('login'); setCurrentPage('login'); }} onSwitchToLogin={() => { setShowAuth('login'); setCurrentPage('login'); }} />
               )}
+              {showAuth === 'reset-password' && (
+                <ResetPassword onSuccess={() => { setShowAuth('login'); setCurrentPage('login'); }} />
+              )}
               {/* main content area - only show when not logging in/registering */}
               {!showAuth && (
                 <>
@@ -578,7 +669,7 @@ const AppContent = () => {
                   {currentPage === 'prebuilt-pcs' && (
                     <PrebuiltPCs user={user} setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} onPrebuiltSelect={handlePrebuiltSelect} />
                   )}
-                  {currentPage === 'pc-assembly' && (!user?.roles || (!user.roles.includes('Super Admin') && !user.roles.includes('Admin'))) && (
+                  {currentPage === 'pc-assembly' && (!user?.roles || !hasAnyRole(['Super Admin', 'Admin'])) && (
                     <PCAssembly 
                       setCurrentPage={setCurrentPage}
                       setSelectedComponents={setSelectedComponents} 
@@ -592,14 +683,14 @@ const AppContent = () => {
                       }}
                     />
                   )}
-                  {currentPage === 'chat-support' && <DynamicChatAccess user={user} fullScreen={true} />}
+                  {currentPage === 'chat-support' && (user?.roles?.includes('Admin') || user?.roles?.includes('Employee')) && <DynamicChatAccess user={user} fullScreen={true} />}
                   {currentPage === 'scroll-test' && <ScrollTestPage />}
                   {currentPage === 'about' && <About setCurrentPage={setCurrentPage} />}
                   {currentPage === 'contact' && <Contact setCurrentPage={setCurrentPage} />}
                   {currentPage === 'faq' && <FAQ setCurrentPage={setCurrentPage} />}
                   {currentPage === 'compatibility-guide' && <CompatibilityGuide setCurrentPage={setCurrentPage} />}
                   {currentPage === 'troubleshooting' && <Troubleshooting setCurrentPage={setCurrentPage} />}
-                  {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} />}
+                  {currentPage === 'my-builds' && user && <MyBuilds setCurrentPage={setCurrentPage} setSelectedComponents={setSelectedComponents} user={user} />}
                   {currentPage === 'my-builds' && !user && (
                     <div className="flex items-center justify-center h-64">
                       <div className="text-center">
@@ -613,6 +704,19 @@ const AppContent = () => {
                     </div>
                   )}
                   {currentPage === 'my-orders' && user && <MyOrders setCurrentPage={setCurrentPage} />}
+                  {currentPage === 'cart' && user && <Cart setCurrentPage={setCurrentPage} user={user} onShowAuth={() => { setShowAuth('login'); setCurrentPage('login'); }} />}
+                  {currentPage === 'cart' && !user && (
+                    <div className="flex items-center justify-center h-64">
+                      <div className="text-center">
+                        <h3 className="text-xl font-semibold text-gray-800 mb-2">Sign in required</h3>
+                        <p className="text-gray-600 mb-4">Log in to view and manage your cart.</p>
+                        <div className="flex items-center gap-2 justify-center">
+                          <button onClick={() => { setShowAuth('login'); setCurrentPage('login'); }} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">Login</button>
+                          <button onClick={() => { setShowAuth('register'); setCurrentPage('register'); }} className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md">Register</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {currentPage === 'notifications' && user && !user?.roles?.includes('Admin') && !user?.roles?.includes('Employee') && <Notifications user={user} />}
                 </>
               )}
@@ -622,9 +726,9 @@ const AppContent = () => {
         {/* notification popups - only for logged in users */}
         {/* {user && <NotificationManager />} */}
       </NotificationProvider>
-  {/* floating chat button (visible for all users, including guests) */}
+  {/* floating chat button (visible for guests and clients only, not admin/employee/super admin) */}
   {/* Only show floating chat for guests and clients (not admin/employee/super admin) */}
-  {(!user?.roles || user?.roles.includes('Client') || !user?.roles?.some(role => ['Super Admin', 'Admin', 'Employee'].includes(role))) && (
+  {(!user || (!user?.roles?.includes('Super Admin') && !user?.roles?.includes('Admin') && !user?.roles?.includes('Employee'))) && (
     <FloatingChatButton user={user} setCurrentPage={setCurrentPage} />
   )}
     </>

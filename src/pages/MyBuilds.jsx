@@ -3,6 +3,7 @@ import { API_BASE } from '../utils/apiBase';
 import { Plus, Trash2, Edit, Eye, Share2, Download, Calendar, CheckCircle, AlertCircle, Clock, Package, Globe, Lock } from 'lucide-react';
 import { getCompatibilityScore as calcCompatibility } from '../utils/compatibilityService';
 import { formatCurrencyPHP } from '../utils/currency';
+import CommentsSection from '../components/CommentsSection';
 
 // Helper function to check if JWT token is expired (supports base64url)
 function isTokenExpired(token) {
@@ -19,12 +20,13 @@ function isTokenExpired(token) {
   }
 }
 
-const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
+const MyBuilds = ({ setCurrentPage, setSelectedComponents, user }) => {
   const [builds, setBuilds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedBuild, setSelectedBuild] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [buildToDelete, setBuildToDelete] = useState(null);
+  const [deletingBuild, setDeletingBuild] = useState(false);
   const [togglingPublic, setTogglingPublic] = useState(null);
   const [submissions, setSubmissions] = useState([]); // status per build
 
@@ -51,9 +53,49 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
           return;
         }
         const result = await response.json();
+        console.log('API Response:', result);
+        
         if (result.success) {
-          setBuilds(result.data);
+          // Debug: Log what we received
+          console.log('Raw builds from API:', result.data);
+          console.log('Debug info:', result.debug);
+          
+          // Ensure all builds have valid IDs
+          const validBuilds = (result.data || []).map((build, index) => {
+            // Ensure ID is properly set - try multiple property names
+            let buildId = build.id || build.build_id || build.ID || build.Id;
+            
+            // Debug: Log each build
+            console.log(`Build ${index}:`, { 
+              id: build.id, 
+              buildId: buildId, 
+              type: typeof build.id,
+              fullBuild: build 
+            });
+            
+            // If still no ID, log error but don't crash
+            if (!buildId || buildId <= 0) {
+              console.error('Build missing valid ID at index', index, ':', build);
+            }
+            
+            // Ensure ID is a number
+            if (buildId) {
+              buildId = typeof buildId === 'string' ? parseInt(buildId, 10) : Number(buildId);
+            }
+            
+            return {
+              ...build,
+              id: buildId || null // Set to null if invalid, will be filtered out
+            };
+          }).filter(build => build.id && build.id > 0); // Filter out builds without valid IDs
+          
+          console.log('Fetched builds:', validBuilds.length, 'valid builds out of', result.data?.length || 0);
+          if (result.debug) {
+            console.log('Backend debug:', result.debug);
+          }
+          setBuilds(validBuilds);
         } else {
+          console.error('API returned error:', result.error || result);
           setBuilds([]);
         }
       } catch (error) {
@@ -82,31 +124,111 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   }, []);
 
   const handleDeleteBuild = (buildId) => {
-    setBuildToDelete(buildId);
+    // Handle various formats: number, string number, or convert
+    let id;
+    
+    // First check if buildId is null or undefined
+    if (buildId === null || buildId === undefined) {
+      console.error('Build ID is null or undefined');
+      alert('Error: Invalid build ID. Please refresh the page and try again.');
+      return;
+    }
+    
+    // Convert to number - handle both string and number inputs
+    if (typeof buildId === 'string') {
+      id = parseInt(buildId, 10);
+    } else if (typeof buildId === 'number') {
+      id = buildId;
+    } else {
+      // Try to convert to string first, then parse
+      id = parseInt(String(buildId), 10);
+    }
+    
+    // Validate the ID - must be a positive integer
+    if (isNaN(id) || id <= 0 || !Number.isInteger(id)) {
+      console.error('Invalid build ID:', buildId, 'parsed as:', id, 'type:', typeof buildId);
+      alert('Error: Invalid build ID. The build may not have been saved properly. Please refresh the page and try again.');
+      return;
+    }
+    
+    // Double-check: ensure id is a valid positive integer
+    const finalId = Number.isInteger(id) && id > 0 ? id : null;
+    if (!finalId) {
+      console.error('Build ID validation failed after conversion:', { original: buildId, converted: id });
+      alert('Error: Invalid build ID. Please refresh the page and try again.');
+      return;
+    }
+    
+    console.log('Setting buildToDelete:', finalId, 'from input:', buildId, 'type:', typeof buildId);
+    setBuildToDelete(finalId);
     setShowDeleteModal(true);
   };
 
-  const confirmDelete = async () => {
-    if (!buildToDelete) return;
+  const confirmDelete = async (e) => {
+    // Prevent any default behavior and stop propagation
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    // Check if buildToDelete is null, undefined, or not a valid number
+    if (buildToDelete === null || buildToDelete === undefined || typeof buildToDelete !== 'number' || buildToDelete <= 0 || deletingBuild) {
+      console.log('Delete blocked:', { buildToDelete, deletingBuild, type: typeof buildToDelete });
+      return;
+    }
+    
+    console.log('Starting delete process for build:', buildToDelete);
+    setDeletingBuild(true);
+    
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/index.php?endpoint=builds&id=${buildToDelete}`, {
+      if (!token || isTokenExpired(token)) {
+        alert('Session expired. Please log in again.');
+        setShowDeleteModal(false);
+        setBuildToDelete(null);
+        setDeletingBuild(false);
+        return;
+      }
+
+      const url = `${API_BASE}/index.php?endpoint=builds&id=${buildToDelete}`;
+      console.log('Delete URL:', url);
+
+      const response = await fetch(url, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
       });
-      const result = await response.json();
-      if (result.success) {
+
+      console.log('Delete response status:', response.status);
+
+      let result;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        result = await response.json();
+        console.log('Delete response:', result);
+      } else {
+        const text = await response.text();
+        console.error('Non-JSON response:', text);
+        throw new Error('Invalid response from server: ' + text.substring(0, 100));
+      }
+
+      if (response.ok && result.success) {
         setBuilds(prev => prev.filter(build => build.id !== buildToDelete));
         setShowDeleteModal(false);
         setBuildToDelete(null);
+        alert('Build deleted successfully!');
       } else {
-        alert('Error deleting build: ' + (result.error || 'Unknown error'));
+        const errorMsg = result.error || result.message || `HTTP ${response.status}: ${response.statusText}`;
+        console.error('Delete failed:', errorMsg, result);
+        alert('Error deleting build: ' + errorMsg);
       }
     } catch (error) {
       console.error('Error deleting build:', error);
-      alert('Error deleting build. Please try again.');
+      alert('Error deleting build: ' + (error.message || 'Please try again.'));
+    } finally {
+      setDeletingBuild(false);
     }
   };
 
@@ -142,7 +264,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   const submitToCommunity = async (build) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/community_submission.php`, {
+      const response = await fetch(`${API_BASE}/index.php?endpoint=community_submission`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
@@ -155,7 +277,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
       });
       const result = await response.json();
       if (result.success) {
-        alert('Build submitted for community review! Admins will review and approve it for the community.');
+        alert('Build submitted for PC Build Sharing review! Admins will review and approve it for PC Build Sharing.');
         setSubmissions(prev => [{ id: result.submission_id, build_id: build.id, status: 'pending' }, ...prev]);
       } else {
         alert(result.error || 'Failed to submit for review.');
@@ -279,10 +401,45 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   );
 
   const BuildCard = ({ build }) => {
-    // Ensure components is always an array
-    const components = Array.isArray(build.components)
-      ? build.components
-      : Object.values(build.components || {});
+    // Ensure build has a valid ID
+    if (!build || !build.id || build.id <= 0) {
+      console.error('Invalid build data:', build);
+      return null;
+    }
+
+    // Ensure components is always an array - handle string, object, or array
+    let components = [];
+    if (Array.isArray(build.components)) {
+      components = build.components.filter(c => c && typeof c === 'object');
+    } else if (build.components && typeof build.components === 'object') {
+      // Handle object format (keyed by category)
+      components = Object.values(build.components).filter(c => c && typeof c === 'object');
+    } else if (typeof build.components === 'string') {
+      // Handle case where components is still a JSON string (shouldn't happen, but be safe)
+      try {
+        const parsed = JSON.parse(build.components);
+        if (Array.isArray(parsed)) {
+          components = parsed.filter(c => c && typeof c === 'object');
+        } else if (parsed && typeof parsed === 'object') {
+          components = Object.values(parsed).filter(c => c && typeof c === 'object');
+        }
+      } catch (e) {
+        console.error('Failed to parse components string:', e);
+        components = [];
+      }
+    }
+
+    // Recalculate total price from components if totalPrice is 0 or missing
+    let effectiveTotalPrice = safePrice(build.totalPrice);
+    if (effectiveTotalPrice <= 0 && components.length > 0) {
+      const calculatedPrice = components.reduce((sum, component) => {
+        const price = safePrice(component.price);
+        return sum + price;
+      }, 0);
+      if (calculatedPrice > 0) {
+        effectiveTotalPrice = calculatedPrice;
+      }
+    }
 
     // Fallback: recompute compatibility when saved value is 0/undefined and we have components
     let effectiveCompatibility = typeof build.compatibility === 'number' ? build.compatibility : 0;
@@ -291,7 +448,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
         const keyAliases = {
           cpu: ['cpu', 'processor', 'procie'],
           motherboard: ['motherboard', 'mobo'],
-          gpu: ['gpu', 'graphics card', 'graphics', 'video card'],
+          gpu: ['gpu', 'graphics card', 'graphics', 'video card', 'vga'],
           ram: ['ram', 'memory'],
           storage: ['storage', 'ssd', 'hdd', 'nvme'],
           psu: ['psu', 'power supply'],
@@ -300,13 +457,22 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
         };
         const selected = {};
         components.forEach(c => {
-          const cat = String(c?.category || '').toLowerCase();
-          const canon = Object.keys(keyAliases).find(k => k === cat || keyAliases[k].some(a => cat.includes(a)));
+          if (!c || typeof c !== 'object') return;
+          const cat = String(c?.category || c?.name || '').toLowerCase();
+          const canon = Object.keys(keyAliases).find(k => 
+            k === cat || 
+            keyAliases[k].some(a => cat.includes(a)) ||
+            (c.name && keyAliases[k].some(a => c.name.toLowerCase().includes(a)))
+          );
           if (canon) selected[canon] = c;
         });
         const comp = calcCompatibility(selected);
-        if (comp && typeof comp.score === 'number') effectiveCompatibility = comp.score;
-      } catch {}
+        if (comp && typeof comp.score === 'number' && comp.score > 0) {
+          effectiveCompatibility = comp.score;
+        }
+      } catch (error) {
+        console.error('Error calculating compatibility:', error);
+      }
     }
     const compatibility = getCompatibilityStatus(effectiveCompatibility);
     const submission = submissions.find(s => s.build_id === build.id);
@@ -324,7 +490,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-gray-700">₱</span>
-                  {formatCurrencyPHP(safePrice(build.totalPrice))}
+                  {formatCurrencyPHP(effectiveTotalPrice)}
                 </div>
               </div>
             </div>
@@ -353,7 +519,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                   onClick={() => submitToCommunity(build)}
                   disabled={submission && submission.status === 'pending'}
                   className={`p-2 rounded-lg transition-colors ${submission && submission.status === 'pending' ? 'text-yellow-600 bg-yellow-50' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'}`}
-                  title={submission && submission.status === 'pending' ? 'Awaiting admin review' : 'Submit to Community'}
+                  title={submission && submission.status === 'pending' ? 'Awaiting admin review' : 'Submit to PC Build Sharing'}
                 >
                   {submission && submission.status === 'pending' ? <Clock className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
                 </button>
@@ -365,8 +531,67 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                 <Edit className="w-4 h-4" />
               </button>
               <button 
-                onClick={() => handleDeleteBuild(build.id)}
+                data-build-id={build.id}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  // Get build ID from data attribute first (most reliable)
+                  let buildId = e.currentTarget.getAttribute('data-build-id');
+                  
+                  // Fallback to build object if data attribute is missing
+                  if (!buildId && build) {
+                    buildId = build.id || build.build_id || build.ID || build.Id;
+                  }
+                  
+                  // Debug: Log the build object to see what we're working with
+                  console.log('Delete button clicked - Build ID from data:', e.currentTarget.getAttribute('data-build-id'));
+                  console.log('Delete button clicked - Build ID from object:', build?.id);
+                  console.log('Delete button clicked - Full build object:', build);
+                  
+                  // Ensure we have a valid build ID
+                  if (!buildId) {
+                    console.error('Build ID is missing from both data attribute and build object:', { 
+                      build, 
+                      'data-build-id': e.currentTarget.getAttribute('data-build-id')
+                    });
+                    alert('Error: Cannot delete build - invalid build ID. Please refresh the page and try again.');
+                    return;
+                  }
+                  
+                  // Convert to number if it's a string
+                  if (typeof buildId === 'string') {
+                    buildId = parseInt(buildId, 10);
+                  }
+                  
+                  // Validate the ID
+                  if (buildId === undefined || buildId === null || buildId <= 0 || isNaN(buildId)) {
+                    console.error('Build ID is invalid after conversion:', { 
+                      original: e.currentTarget.getAttribute('data-build-id'),
+                      build, 
+                      buildId, 
+                      type: typeof buildId 
+                    });
+                    alert('Error: Cannot delete build - invalid build ID. Please refresh the page and try again.');
+                    return;
+                  }
+                  
+                  // Ensure it's a number
+                  const numericId = typeof buildId === 'number' ? buildId : parseInt(buildId, 10);
+                  if (isNaN(numericId) || numericId <= 0) {
+                    console.error('Build ID conversion failed:', { 
+                      original: e.currentTarget.getAttribute('data-build-id'),
+                      converted: numericId 
+                    });
+                    alert('Error: Cannot delete build - invalid build ID. Please refresh the page and try again.');
+                    return;
+                  }
+                  
+                  console.log('Delete button clicked for build:', numericId, 'type:', typeof numericId);
+                  handleDeleteBuild(numericId);
+                }}
                 className="p-2 text-red-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                title="Delete Build"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -399,13 +624,25 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
           </div>
           
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            {components.map((component, index) => (
-              <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs font-medium text-gray-600 mb-1">{component.category}</div>
-                <div className="text-sm font-semibold text-gray-900 truncate">{component.name}</div>
-                <div className="text-xs text-gray-500">{formatCurrencyPHP(component.price || 0)}</div>
+            {components.length > 0 ? (
+              components.map((component, index) => {
+                if (!component || typeof component !== 'object') return null;
+                const category = component.category || component.name || 'Unknown';
+                const name = component.name || 'Unnamed Component';
+                const price = safePrice(component.price);
+                return (
+                  <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs font-medium text-gray-600 mb-1">{category}</div>
+                    <div className="text-sm font-semibold text-gray-900 truncate" title={name}>{name}</div>
+                    <div className="text-xs text-gray-500">{formatCurrencyPHP(price)}</div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="col-span-full text-center text-sm text-gray-500 py-2">
+                No components found
               </div>
-            ))}
+            )}
           </div>
           
           <div className="flex gap-3">
@@ -422,29 +659,6 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
             >
               <Edit className="w-4 h-4" />
               Edit Build
-            </button>
-            <button 
-              onClick={() => handleTogglePublic(build.id)}
-              disabled={togglingPublic === build.id}
-              className={`flex-1 border-2 py-2 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
-                build.isPublic 
-                  ? 'border-green-300 text-green-700 bg-green-50 hover:bg-green-100' 
-                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {togglingPublic === build.id ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-              ) : build.isPublic ? (
-                <>
-                  <Globe className="w-4 h-4" />
-                  Shared
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-4 h-4" />
-                  Share
-                </>
-              )}
             </button>
           </div>
         </div>
@@ -464,7 +678,19 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
   }
 
   const totalBuilds = builds.length;
-  const totalValue = builds.reduce((sum, build) => sum + safePrice(build.totalPrice), 0);
+  const totalValue = builds.reduce((sum, build) => {
+    // Recalculate price from components if totalPrice is 0
+    let price = safePrice(build.totalPrice);
+    if (price <= 0 && build.components) {
+      const components = Array.isArray(build.components) 
+        ? build.components 
+        : Object.values(build.components || {});
+      price = components.reduce((compSum, comp) => {
+        return compSum + safePrice(comp?.price);
+      }, 0);
+    }
+    return sum + price;
+  }, 0);
 
   return (
     <div className="p-6">
@@ -481,7 +707,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
               onClick={() => setCurrentPage('prebuilt-pcs')}
               className="border-2 border-gray-300 text-gray-700 px-5 py-2 rounded-lg font-semibold hover:bg-gray-50 transition-colors flex items-center gap-2"
             >
-              <Share2 className="w-5 h-5" /> Browse Community
+              <Share2 className="w-5 h-5" /> Browse PC Build Sharing
             </button>
             {builds.length > 0 && (
               <button className="bg-green-600 text-white px-5 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center gap-2"
@@ -512,8 +738,20 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={(e) => {
+            // Close modal when clicking backdrop
+            if (e.target === e.currentTarget && !deletingBuild) {
+              setShowDeleteModal(false);
+              setBuildToDelete(null);
+            }
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
                 <Trash2 className="w-5 h-5 text-red-600" />
@@ -527,16 +765,38 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
             
             <div className="flex gap-3">
               <button
-                onClick={() => setShowDeleteModal(false)}
-                className="flex-1 border-2 border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (!deletingBuild) {
+                    setShowDeleteModal(false);
+                    setBuildToDelete(null);
+                  }
+                }}
+                disabled={deletingBuild}
+                className="flex-1 border-2 border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
-                onClick={confirmDelete}
-                className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  confirmDelete(e);
+                }}
+                disabled={deletingBuild}
+                className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Delete
+                {deletingBuild ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
               </button>
             </div>
           </div>
@@ -547,9 +807,24 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
       {selectedBuild && (
         (() => {
           // Ensure components is always an array for the modal
-          const components = Array.isArray(selectedBuild.components)
-            ? selectedBuild.components
-            : Object.values(selectedBuild.components || {});
+          let components = [];
+          if (Array.isArray(selectedBuild.components)) {
+            components = selectedBuild.components.filter(c => c && typeof c === 'object');
+          } else if (selectedBuild.components && typeof selectedBuild.components === 'object') {
+            components = Object.values(selectedBuild.components).filter(c => c && typeof c === 'object');
+          }
+          
+          // Recalculate total price from components if totalPrice is 0 or missing
+          let effectiveTotalPrice = safePrice(selectedBuild.totalPrice);
+          if (effectiveTotalPrice <= 0 && components.length > 0) {
+            const calculatedPrice = components.reduce((sum, component) => {
+              return sum + safePrice(component?.price);
+            }, 0);
+            if (calculatedPrice > 0) {
+              effectiveTotalPrice = calculatedPrice;
+            }
+          }
+          
           // Recompute compatibility if missing/zero
           let effectiveCompatibility = typeof selectedBuild.compatibility === 'number' ? selectedBuild.compatibility : 0;
           if ((!effectiveCompatibility || effectiveCompatibility === 0) && components.length > 0) {
@@ -557,7 +832,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
               const keyAliases = {
                 cpu: ['cpu', 'processor', 'procie'],
                 motherboard: ['motherboard', 'mobo'],
-                gpu: ['gpu', 'graphics card', 'graphics', 'video card'],
+                gpu: ['gpu', 'graphics card', 'graphics', 'video card', 'vga'],
                 ram: ['ram', 'memory'],
                 storage: ['storage', 'ssd', 'hdd', 'nvme'],
                 psu: ['psu', 'power supply'],
@@ -566,13 +841,22 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
               };
               const selected = {};
               components.forEach(c => {
-                const cat = String(c?.category || '').toLowerCase();
-                const canon = Object.keys(keyAliases).find(k => k === cat || keyAliases[k].some(a => cat.includes(a)));
+                if (!c || typeof c !== 'object') return;
+                const cat = String(c?.category || c?.name || '').toLowerCase();
+                const canon = Object.keys(keyAliases).find(k => 
+                  k === cat || 
+                  keyAliases[k].some(a => cat.includes(a)) ||
+                  (c.name && keyAliases[k].some(a => c.name.toLowerCase().includes(a)))
+                );
                 if (canon) selected[canon] = c;
               });
               const comp = calcCompatibility(selected);
-              if (comp && typeof comp.score === 'number') effectiveCompatibility = comp.score;
-            } catch {}
+              if (comp && typeof comp.score === 'number' && comp.score > 0) {
+                effectiveCompatibility = comp.score;
+              }
+            } catch (error) {
+              console.error('Error calculating compatibility in modal:', error);
+            }
           }
           return (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -631,7 +915,7 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                         </div>
                         <div>
                           <h3 className="font-semibold text-gray-900">Total Price</h3>
-                          <p className="text-2xl font-bold text-blue-600">{formatCurrencyPHP(selectedBuild.totalPrice || 0)}</p>
+                          <p className="text-2xl font-bold text-blue-600">{formatCurrencyPHP(effectiveTotalPrice)}</p>
                         </div>
                       </div>
                       <p className="text-sm text-gray-600">All components included</p>
@@ -686,45 +970,68 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                       Build Components
                     </h3>
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {components.map((component, idx) => (
-                        <div key={idx} className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-                          <div className="flex items-start gap-4">
-                            <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <Package className="w-8 h-8 text-gray-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="inline-block bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
-                                  {component.category}
-                                </span>
-                                <span className="text-lg font-bold text-green-600">
-                                  {formatCurrencyPHP(component.price || 0)}
-                                </span>
-                              </div>
-                              <h4 className="font-semibold text-gray-900 text-lg mb-2 line-clamp-2">
-                                {component.name}
-                              </h4>
-                              {component.brand && (
-                                <p className="text-sm text-gray-600 mb-2">
-                                  Brand: <span className="font-medium">{component.brand}</span>
-                                </p>
-                              )}
-                              {component.specs && (
-                                <div className="text-xs text-gray-500 space-y-1">
-                                  {Object.entries(component.specs).slice(0, 3).map(([key, value]) => (
-                                    <div key={key} className="flex justify-between">
-                                      <span className="capitalize">{key.replace(/_/g, ' ')}:</span>
-                                      <span className="font-medium">{value}</span>
-                                    </div>
-                                  ))}
+                      {components.length > 0 ? (
+                        components.map((component, idx) => {
+                          if (!component || typeof component !== 'object') return null;
+                          const category = component.category || 'Unknown';
+                          const name = component.name || 'Unnamed Component';
+                          const price = safePrice(component.price);
+                          return (
+                            <div key={idx} className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
+                              <div className="flex items-start gap-4">
+                                <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                  <Package className="w-8 h-8 text-gray-400" />
                                 </div>
-                              )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="inline-block bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
+                                      {category}
+                                    </span>
+                                    <span className="text-lg font-bold text-green-600">
+                                      {formatCurrencyPHP(price)}
+                                    </span>
+                                  </div>
+                                  <h4 className="font-semibold text-gray-900 text-lg mb-2 line-clamp-2" title={name}>
+                                    {name}
+                                  </h4>
+                                  {component.brand && (
+                                    <p className="text-sm text-gray-600 mb-2">
+                                      Brand: <span className="font-medium">{component.brand}</span>
+                                    </p>
+                                  )}
+                                  {component.specs && typeof component.specs === 'object' && (
+                                    <div className="text-xs text-gray-500 space-y-1">
+                                      {Object.entries(component.specs).slice(0, 3).map(([key, value]) => (
+                                        <div key={key} className="flex justify-between">
+                                          <span className="capitalize">{key.replace(/_/g, ' ')}:</span>
+                                          <span className="font-medium">{String(value)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          </div>
+                          );
+                        })
+                      ) : (
+                        <div className="col-span-full text-center text-gray-500 py-8">
+                          No components found in this build
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
+
+                  {/* Comments Section - Only show for public builds */}
+                  {selectedBuild.isPublic && (
+                    <div className="mt-8">
+                      <CommentsSection 
+                        buildId={selectedBuild.id} 
+                        user={user}
+                        className="mb-8"
+                      />
+                    </div>
+                  )}
 
                   {/* Action Buttons */}
                   <div className="flex gap-4 mt-8 pt-6 border-t border-gray-200">
@@ -734,10 +1041,6 @@ const MyBuilds = ({ setCurrentPage, setSelectedComponents }) => {
                     >
                       <Edit className="w-5 h-5" />
                       Edit Build
-                    </button>
-                    <button className="flex-1 border-2 border-gray-300 text-gray-700 py-3 px-6 rounded-lg font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
-                      <Share2 className="w-5 h-5" />
-                      Share Build
                     </button>
                   </div>
                 </div>

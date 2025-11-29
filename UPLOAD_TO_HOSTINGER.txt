@@ -1,0 +1,28 @@
+FILES TO UPLOAD TO HOSTINGER FILE MANAGER
+==========================================
+
+After uploading chat.php, upload these files:
+
+1. FROM: dist/assets/index-2a0d8ee6.js
+   TO: public_html/assets/index-2a0d8ee6.js
+   (DELETE OLD: public_html/assets/index-85d8cd2f.js)
+
+2. FROM: dist/assets/main-88058510.js
+   TO: public_html/assets/main-88058510.js
+   (DELETE OLD: public_html/assets/main-582229d4.js)
+
+3. FROM: dist/assets/main.ee983d64.css
+   TO: public_html/assets/main.ee983d64.css
+   (REPLACE existing file)
+
+4. FROM: dist/index.html
+   TO: public_html/index.html
+   (REPLACE existing file - this updates the script reference)
+
+SUMMARY:
+- Upload 3 files to /public_html/assets/
+- Upload 1 file to /public_html/
+- Delete 2 old JS files from /public_html/assets/
+
+These files contain the fixed chat support code that prevents zeros from showing.
+

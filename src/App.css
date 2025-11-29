@@ -92,8 +92,8 @@
   padding: .5rem 1rem; border: 1px solid transparent; cursor: pointer;
   transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.btn-primary { background: #4f46e5; color: #fff; }
-.btn-primary:hover { background: #4338ca; }
+.btn-primary { background: #16a34a; color: #fff; }
+.btn-primary:hover { background: #15803d; }
 .btn-secondary { background: #f3f4f6; color: #111827; border-color: #e5e7eb; }
 .btn-secondary:hover { background: #e5e7eb; }
 .btn-danger { background: #dc2626; color: #fff; }
@@ -143,4 +143,133 @@
 .page-subtitle {
   color: #6b7280; /* text-gray-600 */
   font-size: 1rem; /* text-base */
+}
+
+/* ===== FIX FOR TEXT ALIGNMENT ISSUE ===== */
+/* Override problematic text alignment in dashboard "No data available" sections */
+.flex.flex-col.items-center.justify-center.h-full.p-6.text-center p.text-gray-400.text-sm {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  max-width: 28rem !important; /* max-w-md */
+  text-align: center !important;
+}
+
+/* Alternative selector for the problematic text */
+.text-center.w-full p.text-gray-400.text-sm.px-4 {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  max-width: 28rem !important;
+  text-align: center !important;
+}
+
+/* More specific override for the exact problematic structure */
+.flex.flex-col.items-center.justify-center.h-full.p-6.text-center .text-center.w-full p.text-gray-400.text-sm.px-4 {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  max-width: 28rem !important;
+  text-align: center !important;
+}
+
+/* ===== COMPREHENSIVE TEXT ALIGNMENT FIX ===== */
+/* Ensure all dashboard "No data available" text is perfectly centered */
+.flex.items-center.justify-center.h-full.text-gray-400.text-lg.text-center .text-center {
+  text-align: center !important;
+}
+
+.flex.items-center.justify-center.h-full.text-gray-400.text-lg.text-center .text-center p {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 28rem !important;
+}
+
+/* Fix for any remaining alignment issues in dashboard panels */
+.card.chart-card .text-center p,
+.card .text-center p {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Ensure Package icons are centered */
+.text-center .mx-auto {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Force center alignment for all explanatory text in dashboard */
+.text-gray-400.text-sm.max-w-md.mx-auto.text-center {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* ULTRA-SPECIFIC FIXES FOR PERSISTENT ALIGNMENT ISSUES */
+/* Target the exact problematic elements */
+.card.chart-card .flex.flex-col.items-center.justify-center.h-full.p-6.text-center p {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Force center alignment for all paragraphs in dashboard no-data sections */
+.flex.flex-col.items-center.justify-center p.text-gray-400.text-sm {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Override any conflicting styles */
+.text-center p {
+  text-align: center !important;
+}
+
+/* Specific fix for the exact structure shown in images */
+.card.chart-card .text-center p.text-gray-400.text-sm.max-w-md.mx-auto {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* NUCLEAR OPTION - Force center alignment for ALL text in dashboard panels */
+.card.chart-card p,
+.card p {
+  text-align: center !important;
+}
+
+/* Force center alignment for all paragraphs with specific classes */
+p.text-gray-400.text-sm {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* Override any Tailwind or other CSS that might be causing left alignment */
+.text-center p,
+.text-center div p {
+  text-align: center !important;
+}
+
+/* NUCLEAR OPTION - Force center alignment with maximum specificity */
+div[style*="textAlign: 'center'"] p,
+div[style*="textAlign: 'center'"] h3 {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  display: block !important;
+}
+
+/* Force center alignment for inline style elements */
+[style*="textAlign: 'center'"] {
+  text-align: center !important;
+}
+
+[style*="textAlign: 'center'"] * {
+  text-align: center !important;
 }

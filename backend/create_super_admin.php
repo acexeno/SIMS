@@ -2,6 +2,13 @@
 // backend/create_super_admin.php
 require_once __DIR__ . '/config/database.php';
 
+try {
+    $pdo = get_db_connection();
+} catch (Exception $e) {
+    echo "Database connection failed: " . $e->getMessage();
+    exit;
+}
+
 // Super admin credentials
 $username = 'SuperAdminAccount';
 $email = 'builditPC@gmail.com';
@@ -52,6 +59,14 @@ try {
         'user_id' => $user_id,
         'role_id' => $role_id
     ]);
+    
+    // Also update the role column in users table for consistency
+    try {
+        $stmt = $pdo->prepare('UPDATE users SET role = ? WHERE id = ?');
+        $stmt->execute([$role_name, $user_id]);
+    } catch (Exception $e) {
+        echo "Warning: Could not update users.role column: " . $e->getMessage() . "\n";
+    }
 
     echo "Super admin account created successfully!";
 } catch (Exception $e) {

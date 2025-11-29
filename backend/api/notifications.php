@@ -1,17 +1,47 @@
 <?php
 // Notifications API endpoints for SIMS
 
+// Error reporting controlled by environment
+require_once __DIR__ . '/../config/env.php';
+$appDebug = env('APP_DEBUG', '0');
+if ($appDebug === '1' || strtolower($appDebug) === 'true') {
+    error_reporting(E_ALL);
+    ini_set('display_errors', 1);
+} else {
+    error_reporting(E_ALL & ~E_NOTICE & ~E_STRICT & ~E_DEPRECATED);
+    ini_set('display_errors', 0);
+}
+
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/cors.php';
+require_once __DIR__ . '/../utils/jwt_helper.php';
+
 // Local helper: safely extract user_id from JWT from multiple sources
 function getUserIdFromRequest() {
     // Use the centralized getBearerToken function which handles all token sources
     $token = null;
     if (function_exists('getBearerToken')) {
         $token = getBearerToken();
-    }
-    
-    // Additional fallback for query parameter (commonly used by frontend retry logic)
-    if (!$token && isset($_GET['token']) && !empty($_GET['token'])) {
-        $token = trim($_GET['token']);
+    } else {
+        error_log("getUserIdFromRequest: getBearerToken function not found");
+        // Fallback implementation
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
+        
+        if ($authHeader && preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+            $token = trim($matches[1]);
+        }
+        
+        if (!$token) {
+            $xAuthToken = $headers['X-Auth-Token'] ?? $headers['x-auth-token'] ?? null;
+            if ($xAuthToken) {
+                $token = trim($xAuthToken);
+            }
+        }
+        
+        if (!$token && isset($_GET['token']) && !empty($_GET['token'])) {
+            $token = trim($_GET['token']);
+        }
     }
 
     if (!$token) {
@@ -36,6 +66,8 @@ function getUserIdFromRequest() {
             error_log("getUserIdFromRequest: Token verification failed for token: " . substr($token, 0, 20) . "...");
             return null;
         }
+        
+        error_log("getUserIdFromRequest: Token verification successful for user: " . ($decoded['user_id'] ?? 'unknown'));
         
         $userId = $decoded['user_id'] ?? null;
         if (!$userId) {
@@ -79,6 +111,32 @@ function generateStockNotifications($pdo) {
     $users = $stmt->fetchAll();
     if (!$users) return;
 
+    // Check if we should generate notifications (only once per day to prevent spam)
+    $lastCheck = $pdo->query("SELECT MAX(created_at) as last_check FROM notifications WHERE type = 'stock'")->fetchColumn();
+    if ($lastCheck && strtotime($lastCheck) > strtotime('-1 day')) {
+        return; // Skip if notifications were generated in the last 24 hours
+    }
+
+    // Clean up old stock notifications before generating new ones
+    $pdo->query("DELETE FROM notifications WHERE type = 'stock' AND created_at < DATE_SUB(NOW(), INTERVAL 1 DAY)");
+    
+    // Check if any user already has stock notifications today
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = 'stock' AND created_at >= CURDATE()");
+    $hasRecentNotifications = false;
+    foreach ($users as $user) {
+        $stmt->execute([$user['id']]);
+        $dailyCount = $stmt->fetchColumn();
+        if ($dailyCount > 0) {
+            $hasRecentNotifications = true;
+            break;
+        }
+    }
+    
+    // If any user has recent notifications, skip generation
+    if ($hasRecentNotifications) {
+        return;
+    }
+
     // Get all components with category for better grouping in notifications
     $components = $pdo->query("SELECT c.id, c.name, c.stock_quantity, cc.name AS category_name
                                FROM components c
@@ -98,7 +156,7 @@ function generateStockNotifications($pdo) {
         }
     }
 
-    // Helper to build a readable, categorized message
+    // Helper to build a readable, categorized message with bullet points
     $buildMessage = function ($intro, $groups, $footer = '') {
         if (empty($groups)) return '';
         ksort($groups);
@@ -106,12 +164,19 @@ function generateStockNotifications($pdo) {
         foreach ($groups as $category => $names) {
             sort($names);
             $count = count($names);
-            // Limit to first 12 entries for readability; mention the remainder
-            $display = array_slice($names, 0, 12);
-            $suffix = $count > 12 ? (" … and " . ($count - 12) . " more") : '';
-            $lines[] = "- {$category} ({$count}): " . implode(', ', $display) . $suffix;
+            $lines[] = "\n• {$category} ({$count} items):";
+            
+            // Limit to first 10 entries for readability; mention the remainder
+            $display = array_slice($names, 0, 10);
+            foreach ($display as $name) {
+                $lines[] = "  - {$name}";
+            }
+            
+            if ($count > 10) {
+                $lines[] = "  ... and " . ($count - 10) . " more items";
+            }
         }
-        if ($footer !== '') $lines[] = $footer;
+        if ($footer !== '') $lines[] = "\n" . $footer;
         return implode("\n", $lines);
     };
 
@@ -138,7 +203,7 @@ function generateStockNotifications($pdo) {
                 $upd = $pdo->prepare("UPDATE notifications SET message = ?, priority = 'high', read_status = 0, updated_at = NOW() WHERE id = ?");
                 $upd->execute([$outMessage, $existing['id']]);
             } else {
-                $insert = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority) VALUES (?, 'stock', ?, ?, 'high')");
+                $insert = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority, created_at) VALUES (?, 'stock', ?, ?, 'high', NOW())");
                 $insert->execute([$user['id'], $outTitle, $outMessage]);
             }
         }
@@ -152,7 +217,7 @@ function generateStockNotifications($pdo) {
                 $upd = $pdo->prepare("UPDATE notifications SET message = ?, priority = 'medium', read_status = 0, updated_at = NOW() WHERE id = ?");
                 $upd->execute([$lowMessage, $existing['id']]);
             } else {
-                $insert = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority) VALUES (?, 'stock', ?, ?, 'medium')");
+                $insert = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, priority, created_at) VALUES (?, 'stock', ?, ?, 'medium', NOW())");
                 $insert->execute([$user['id'], $lowTitle, $lowMessage]);
             }
         }
@@ -161,7 +226,8 @@ function generateStockNotifications($pdo) {
 
 // Get user notifications
 function handleGetNotifications($pdo) {
-    // generateStockNotifications($pdo); // Removed to prevent duplicate notifications on fetch
+    // Generate stock notifications in real-time on each fetch
+    generateStockNotifications($pdo);
     $userId = getUserIdFromRequest();
     if (!$userId) {
         http_response_code(401);

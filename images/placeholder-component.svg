@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="320" viewBox="0 0 512 320">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="320" fill="url(#g)"/>
+  <g fill="none" stroke="#10b981" stroke-width="3" opacity="0.6">
+    <rect x="56" y="64" width="400" height="200" rx="12"/>
+    <rect x="86" y="94" width="160" height="100" rx="8"/>
+    <circle cx="360" cy="150" r="48"/>
+    <path d="M300 210h116" stroke-linecap="round"/>
+  </g>
+  <g fill="#e5e7eb" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">
+    <text x="256" y="300" font-size="14" opacity="0.8">Placeholder component image</text>
+  </g>
+</svg>

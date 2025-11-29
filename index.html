@@ -4,13 +4,34 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/images/placeholder-component.png" />
-    <meta name="description" content="Build It PC - Plan, compare, and validate PC builds with compatibility checks." />
+    <meta name="description" content="SIMS: Sales and Inventory Management System - Manage and track your inventory and sales." />
     <meta name="theme-color" content="#16a34a" />
-    <title>Build It PC — PC Builder & Compatibility Checker</title>
-    <!-- Dev note: assets are loaded by Vite from /src/main.jsx -->
+    <title>SIMS: Sales and Inventory Management System</title>
+    <!-- Dev-first boot: try Vite entry, fallback to built assets when not available -->
+    <script type="module">
+      console.log('[index.html] Script loading started...');
+      (async () => {
+        try {
+          console.log('[index.html] Attempting to import /src/main.jsx...');
+          await import('/src/main.jsx');
+          console.log('[index.html] Successfully imported /src/main.jsx');
+        } catch (e) {
+          console.error('[index.html] Failed to import /src/main.jsx:', e);
+          console.log('[index.html] Falling back to built assets...');
+          const s = document.createElement('script');
+          s.type = 'module';
+          s.crossOrigin = '';
+          s.src = '/assets/index-52eda591.js';
+          document.head.appendChild(s);
+          const l = document.createElement('link');
+          l.rel = 'stylesheet';
+          l.href = '/assets/index-b4d4dd55.css';
+          document.head.appendChild(l);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

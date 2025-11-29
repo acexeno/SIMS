@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE } from '../utils/apiBase';
+import { getApiEndpoint } from '../utils/apiBase';
 import { authorizedFetch, ensureValidToken } from '../utils/auth';
 import { 
   Plus, 
@@ -34,6 +34,15 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [components, setComponents] = useState([]);
   const [categories, setCategories] = useState([]);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState('prebuilts'); // 'prebuilts', 'community', 'management'
+
+  // Community Builds state
+  const [publicBuilds, setPublicBuilds] = useState([]);
+  const [publicBuildsLoading, setPublicBuildsLoading] = useState(false);
+  const [publicBuildsPage, setPublicBuildsPage] = useState(1);
+  const [publicBuildsPages, setPublicBuildsPages] = useState(1);
 
   // Community Management state
   const [communitySubmissions, setCommunitySubmissions] = useState([]);
@@ -125,7 +134,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
         return; 
       }
       console.log('Fetching prebuilts...');
-      const response = await authorizedFetch(`${API_BASE}/prebuilts.php?all=1`);
+      const response = await authorizedFetch(getApiEndpoint('prebuilts') + '?all=1');
       
       if (response.status === 401) {
         console.log('Authentication failed for prebuilts');
@@ -168,7 +177,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
   // Fetch components for selection
   const fetchComponents = async () => {
     try {
-      const response = await fetch(`${API_BASE}/get_all_components.php`);
+      const response = await fetch(getApiEndpoint('get_all_components'));
       const data = await response.json();
       if (data.success) {
         setComponents(data.data);
@@ -181,7 +190,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
   // Fetch categories
   const fetchCategories = async () => {
     try {
-      const response = await fetch(`${API_BASE}/get_all_categories.php`);
+      const response = await fetch(getApiEndpoint('get_all_categories'));
       const data = await response.json();
       if (data.success) {
         setCategories(data.data);
@@ -256,11 +265,35 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
       return;
     }
     try {
+      // Auto-generate description if empty, matching card formatting (comma-separated)
+      const descTrim = (formData.description || '').trim();
+      let payload = { ...formData };
+      if (descTrim.length === 0) {
+        const idToName = new Map((components || []).map(c => [String(c.id), c.name]));
+        const short = (name) => (name || '').split(',')[0].split('(')[0].trim();
+        const compIds = formData.component_ids || {};
+        const parts = [];
+        const pushIf = (key) => {
+          const id = compIds[key];
+          const nm = idToName.get(String(id));
+          if (nm) parts.push(short(nm));
+        };
+        // Order similar to creation flow
+        pushIf('cpu');
+        pushIf('motherboard');
+        pushIf('gpu');
+        pushIf('ram');
+        pushIf('storage');
+        pushIf('psu');
+        pushIf('case');
+        pushIf('cooler');
+        payload = { ...payload, description: parts.join(', ') };
+      }
       const token = await ensureValidToken(false);
       if (!token) { alert('Session expired. Please log in again.'); return; }
       const url = editingPrebuilt 
-        ? `${API_BASE}/prebuilts.php?id=${editingPrebuilt.id}`
-        : `${API_BASE}/prebuilts.php`;
+        ? getApiEndpoint('prebuilts') + `?id=${editingPrebuilt.id}`
+        : getApiEndpoint('prebuilts');
       
       const method = editingPrebuilt ? 'PUT' : 'POST';
       
@@ -269,7 +302,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
       
       const data = await response.json();
@@ -294,7 +327,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
     try {
       const token = await ensureValidToken(false);
       if (!token) { alert('Session expired. Please log in again.'); return; }
-      const response = await authorizedFetch(`${API_BASE}/prebuilts.php?id=${id}`, {
+      const response = await authorizedFetch(getApiEndpoint('prebuilts') + `?id=${id}`, {
         method: 'DELETE'
       });
       
@@ -399,7 +432,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
     try {
       const token = await ensureValidToken(false);
       if (!token) return;
-      const res = await authorizedFetch(`${API_BASE}/community_management.php?action=stats`);
+      const res = await authorizedFetch(getApiEndpoint('community_management', { action: 'stats' }));
       const result = await res.json();
       if (result && result.success) {
         const stats = { pending: 0, approved: 0, rejected: 0 };
@@ -411,15 +444,36 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
     }
   };
 
+  const fetchPublicBuilds = async (page = 1) => {
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) return;
+      setPublicBuildsLoading(true);
+      const res = await authorizedFetch(getApiEndpoint('builds', { public: '1', page: String(page) }));
+      const data = await res.json();
+      if (data && data.success) {
+        setPublicBuilds(Array.isArray(data.data) ? data.data : []);
+        const p = data.pagination || {};
+        setPublicBuildsPages(Number(p.pages) || 1);
+      } else {
+        setPublicBuilds([]);
+        setPublicBuildsPages(1);
+      }
+    } catch (e) {
+      console.error('Error fetching public builds:', e);
+      setPublicBuilds([]);
+      setPublicBuildsPages(1);
+    } finally {
+      setPublicBuildsLoading(false);
+    }
+  };
+
   const fetchCommunitySubmissions = async (status = 'pending', page = 1) => {
     try {
       const token = await ensureValidToken(false);
       if (!token) return;
       setSubmissionsLoading(true);
-      const params = new URLSearchParams();
-      if (status) params.append('status', status);
-      params.append('page', String(page));
-      const res = await authorizedFetch(`${API_BASE}/community_management.php?action=submissions&${params.toString()}`);
+      const res = await authorizedFetch(getApiEndpoint('community_management', { action: 'submissions', status, page: String(page) }));
       const data = await res.json();
       if (data && data.success) {
         setCommunitySubmissions(Array.isArray(data.data) ? data.data : []);
@@ -440,13 +494,18 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
 
   useEffect(() => { fetchSubmissionStats(); }, []);
   useEffect(() => { fetchCommunitySubmissions(communityStatus, communityPage); }, [communityStatus, communityPage]);
+  useEffect(() => { 
+    if (activeTab === 'community') {
+      fetchPublicBuilds(publicBuildsPage);
+    }
+  }, [activeTab, publicBuildsPage]);
 
   const handleSubmissionReview = async (submissionId, status) => {
     setReviewingSubmission(true);
     try {
       const token = await ensureValidToken(false);
       if (!token) { alert('You must be logged in to review submissions.'); return; }
-      const response = await authorizedFetch(`${API_BASE}/community_management.php?action=review`, {
+      const response = await authorizedFetch(getApiEndpoint('community_management', { action: 'review' }), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ submission_id: submissionId, status, admin_notes: reviewNotes })
@@ -469,6 +528,58 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
     }
   };
 
+  // Handle submission deletion (for admins)
+  const handleSubmissionDelete = async (submissionId, submissionName) => {
+    if (!confirm(`Are you sure you want to delete the submission "${submissionName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) { alert('You must be logged in to delete submissions.'); return; }
+      const response = await authorizedFetch(`${getApiEndpoint('community_management', { action: 'delete' })}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission_id: submissionId })
+      });
+      const result = await response.json();
+      if (result && result.success) {
+        alert('Submission deleted successfully!');
+        fetchCommunitySubmissions(communityStatus, communityPage);
+        fetchSubmissionStats();
+      } else {
+        alert('Error deleting submission: ' + (result && result.error ? result.error : 'Unknown error'));
+      }
+    } catch (e) {
+      console.error('Error deleting submission:', e);
+      alert('Error deleting submission. Please try again.');
+    }
+  };
+
+  const handleDeleteCommunityBuild = async (buildId) => {
+    if (!window.confirm('Are you sure you want to delete this PC build sharing entry? This action cannot be undone.')) return;
+    
+    try {
+      const token = await ensureValidToken(false);
+      if (!token) { alert('Session expired. Please log in again.'); return; }
+      const response = await authorizedFetch(getApiEndpoint('builds', { id: String(buildId) }), {
+        method: 'DELETE'
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        fetchPublicBuilds(publicBuildsPage);
+        alert('PC build sharing entry deleted successfully!');
+      } else {
+        alert(data.error || 'An error occurred while deleting the build');
+      }
+    } catch (error) {
+      console.error('Error deleting PC build sharing entry:', error);
+      alert('An error occurred while deleting the build');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -485,7 +596,7 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h2 className="page-title">Prebuilt PC</h2>
-        {isAdminOrSuper && (
+        {isAdminOrSuper && activeTab === 'prebuilts' && (
           <div className="flex gap-2">
             <button
               onClick={() => openModal()}
@@ -498,39 +609,66 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
         )}
       </div>
 
-      {/* seeding info removed */}
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+        <button
+          onClick={() => setActiveTab('prebuilts')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'prebuilts'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          Prebuilt PCs
+        </button>
+        {isAdminOrSuper && (
+          <button
+            onClick={() => setActiveTab('management')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'management'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            PC Build Sharing
+          </button>
+        )}
+      </div>
 
       {!isAdminOrSuper && (
         <div className="text-sm text-gray-600">
-          Note: Curated Prebuilt actions are limited to Admins. You can still manage Community submissions below.
+          Note: Curated Prebuilt actions are limited to Admins. You can still manage PC Build Sharing submissions below.
         </div>
       )}
 
-      {/* Filters */}
-      <div className="card">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Search prebuilts..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            />
+      {/* Prebuilt PCs Tab */}
+      {activeTab === 'prebuilts' && (
+        <>
+          {/* Filters */}
+          <div className="card">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Search prebuilts..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              >
+                <option value="all">All Categories</option>
+                <option value="gaming">Gaming</option>
+                <option value="workstation">Workstation</option>
+                <option value="cooling">Cooling</option>
+              </select>
+            </div>
           </div>
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-          >
-            <option value="all">All Categories</option>
-            <option value="gaming">Gaming</option>
-            <option value="workstation">Workstation</option>
-            <option value="cooling">Cooling</option>
-          </select>
-        </div>
-      </div>
 
       {/* Prebuilts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -549,9 +687,9 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
             </div>
 
             {/* Content */}
-            <div className="p-6">
+            <div className="p-6 text-left">
               <div className="flex items-start justify-between mb-2">
-                <h3 className="text-lg font-semibold text-gray-900">{prebuilt.name}</h3>
+                <h3 className="text-lg font-semibold text-gray-900 text-left">{prebuilt.name}</h3>
                 {isAdminOrSuper && (
                   <div className="flex gap-1">
                     <button
@@ -572,26 +710,26 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
                 )}
               </div>
               
-              <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+              <div className="flex items-center gap-2 text-sm text-gray-600 mb-2 text-left">
                 {getCategoryIcon(prebuilt.category)}
                 <span className="capitalize">{prebuilt.category}</span>
               </div>
               
-              <div className="text-lg font-bold text-green-600 mb-2">
+              <div className="text-lg font-bold text-green-600 mb-2 text-left">
                 {formatCurrencyPHP(prebuilt.price)}
               </div>
               
               {prebuilt.description && (
-                <p className="text-sm text-gray-600 mb-3 line-clamp-2">{prebuilt.description}</p>
+                <p className="text-sm text-gray-600 mb-3 line-clamp-2 break-words text-left">{prebuilt.description}</p>
               )}
 
               {/* Component preview */}
-              <div className="text-xs text-gray-500 space-y-1">
+              <div className="text-xs text-gray-500 space-y-1 text-left">
                 {(() => { const cids = safeParseJson(prebuilt.component_ids, {}); return (
                   <>
-                    <div>CPU: {getComponentName(cids.cpu)}</div>
-                    <div>GPU: {getComponentName(cids.gpu)}</div>
-                    <div>RAM: {getComponentName(cids.ram)}</div>
+                    <div className="text-left">CPU: {getComponentName(cids.cpu)}</div>
+                    <div className="text-left">GPU: {getComponentName(cids.gpu)}</div>
+                    <div className="text-left">RAM: {getComponentName(cids.ram)}</div>
                   </>
                 ); })()}
               </div>
@@ -606,13 +744,18 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
           <p>No prebuilts found</p>
         </div>
       )}
+        </>
+      )}
 
-      {/* Community Management Panel */}
-      <div className="card">
+      {/* Community Builds removed intentionally */}
+
+      {/* Community Management Tab */}
+      {activeTab === 'management' && (
+        <div className="card">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <CheckSquare className="w-5 h-5 text-green-600" />
-            <h3 className="text-lg font-semibold text-gray-900">Community Management</h3>
+            <h3 className="text-lg font-semibold text-gray-900">PC Build Sharing</h3>
           </div>
           <div className="flex gap-2 text-sm">
             <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700">Pending: {submissionStats.pending || 0}</span>
@@ -684,7 +827,15 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
                           Review
                         </button>
                       ) : (
-                        <span className="text-xs text-gray-500">{sub.status?.toUpperCase()}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">{sub.status?.toUpperCase()}</span>
+                          <button
+                            onClick={() => handleSubmissionDelete(sub.id, sub.build_name)}
+                            className="px-3 py-1 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -712,7 +863,8 @@ const SuperAdminPrebuiltPCs = ({ user }) => {
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Review Modal */}
       {selectedSubmission && (

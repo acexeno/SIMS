@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug User Roles</title>
+</head>
+<body>
+    <h1>User Roles Debug</h1>
+    <div id="output"></div>
+    
+    <script>
+        // Get token from localStorage
+        const token = localStorage.getItem('token');
+        const user = localStorage.getItem('user');
+        
+        let output = '<h2>Token Info:</h2>';
+        
+        if (token) {
+            try {
+                const part = token.split('.')[1];
+                if (part) {
+                    // Convert base64url -> base64
+                    let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+                    while (b64.length % 4) b64 += '=';
+                    const payload = JSON.parse(atob(b64));
+                    
+                    output += '<p><strong>JWT Payload:</strong></p>';
+                    output += '<pre>' + JSON.stringify(payload, null, 2) + '</pre>';
+                    
+                    output += '<p><strong>Roles from JWT:</strong> ' + JSON.stringify(payload.roles) + '</p>';
+                    output += '<p><strong>Is Super Admin:</strong> ' + (payload.roles && payload.roles.includes('Super Admin')) + '</p>';
+                    output += '<p><strong>Is Admin:</strong> ' + (payload.roles && payload.roles.includes('Admin')) + '</p>';
+                }
+            } catch (e) {
+                output += '<p style="color: red;">Error parsing token: ' + e.message + '</p>';
+            }
+        } else {
+            output += '<p style="color: red;">No token found</p>';
+        }
+        
+        output += '<h2>User Object:</h2>';
+        if (user) {
+            try {
+                const userObj = JSON.parse(user);
+                output += '<pre>' + JSON.stringify(userObj, null, 2) + '</pre>';
+                output += '<p><strong>User Roles:</strong> ' + JSON.stringify(userObj.roles) + '</p>';
+            } catch (e) {
+                output += '<p style="color: red;">Error parsing user: ' + e.message + '</p>';
+            }
+        } else {
+            output += '<p style="color: red;">No user object found</p>';
+        }
+        
+        document.getElementById('output').innerHTML = output;
+    </script>
+</body>
+</html>

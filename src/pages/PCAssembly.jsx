@@ -43,10 +43,11 @@ import CompatibilityChecker from '../components/CompatibilityChecker'
 import CompatibilityComparisonModal from '../components/CompatibilityComparisonModal'
 import { getCompatibilityScore, filterCompatibleComponents } from '../utils/compatibilityService'
 import axios from 'axios'
-import { API_BASE } from '../utils/apiBase'
+import { API_BASE, getApiEndpoint } from '../utils/apiBase'
 import { formatCurrencyPHP } from '../utils/currency'
+import { getComponentImage } from '../utils/componentImages'
 
-const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, setSelectedComponents: setSelectedComponentsProp, onLoaded, user, onShowAuth, setUser }) => {
+const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, setSelectedComponents: setSelectedComponentsProp, onLoaded, user, onShowAuth, setUser, saveToPrebuilts = false, hideCompleteButton = false }) => {
   // State management
   const [internalSelectedComponents, setInternalSelectedComponents] = useState({
     cpu: null,
@@ -79,6 +80,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   // Order State
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orderConfirmation, setOrderConfirmation] = useState(null); // { order_id, total }
+  const [showOrderConfirmation, setShowOrderConfirmation] = useState(false); // Show review modal before purchase
   
   // Build State
   const [buildName, setBuildName] = useState('');
@@ -144,6 +146,19 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     }
   }, []);
 
+  // Helper function to determine component type from component data
+  const getComponentType = useCallback((component) => {
+    if (component.socket) return 'cpu';
+    if (component.chipset || component.ram_type || component.form_factor) return 'motherboard';
+    if (component.chipset && component.memory) return 'gpu';
+    if (component.type && component.speed) return 'ram';
+    if (component.capacity && component.type && (component.type.toLowerCase().includes('ssd') || component.type.toLowerCase().includes('hdd'))) return 'storage';
+    if (component.wattage && component.efficiency) return 'psu';
+    if (component.form_factor && component.fans) return 'case';
+    if (component.type && component.tdp) return 'cooler';
+    return 'default';
+  }, []);
+
   // Update compatibility score when components change
   useEffect(() => {
     // Only calculate compatibility if components are loaded
@@ -162,16 +177,41 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         if (!currentCategory || !currentCategory.key) return;
         
         const dbCategory = getApiCategoryName(currentCategory.key);
-        const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
+        const url = getApiEndpoint('components', { 
+          category: dbCategory,
+          ...(branch && { branch })
+        });
         
         const response = await fetch(url);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`Error fetching components: ${response.status} ${response.statusText}`, errorText);
+          
+          // Try to parse as JSON for detailed error
+          try {
+            const errorData = JSON.parse(errorText);
+            console.error('API Error Details:', errorData);
+          } catch (e) {
+            console.error('Non-JSON error response:', errorText);
+          }
+          
+          setAllComponents([]);
+          return;
+        }
+        
         const data = await response.json();
 
         if (data.success) {
-          setAllComponents(data.data);
+          setAllComponents(data.data || []);
+          console.log(`Loaded ${data.data?.length || 0} components for category: ${dbCategory}`);
+        } else {
+          console.error('API returned error:', data.error || 'Unknown error');
+          setAllComponents([]);
         }
       } catch (err) {
         console.error('Error fetching components for comparison:', err);
+        setAllComponents([]);
       }
     };
 
@@ -313,7 +353,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     }
   }, []);
 
-  const fetchRecommendations = useCallback(async (category, requirements) => {
+  const fetchRecommendations = useCallback(async (category, requirements = {}) => {
     const apiCategory = getApiCategoryName(category);
     if (!apiCategory) return;
     
@@ -327,7 +367,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       if (requirements.minSize) apiParams.minSize = requirements.minSize;
       if (requirements.formFactor) apiParams.formFactor = requirements.formFactor;
       
-      let { data } = await axios.get(`${API_BASE}/recommendations.php`, { params: apiParams });
+      let { data } = await axios.get(`${API_BASE}/index.php?endpoint=recommendations`, { params: apiParams });
       
       if (!data.data || data.data.length === 0) {
         const broaderParams = { 
@@ -336,7 +376,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
           minPrice: 1000,
           maxPrice: 500000
         };
-        const broaderResponse = await axios.get(`${API_BASE}/recommendations.php`, { params: broaderParams });
+        const broaderResponse = await axios.get(`${API_BASE}/index.php?endpoint=recommendations`, { params: broaderParams });
         if (broaderResponse.data.data && broaderResponse.data.data.length > 0) {
           data = broaderResponse.data;
         }
@@ -344,7 +384,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       
       if (!data.data || data.data.length === 0) {
         const topParams = { category: apiCategory, limit: 3 };
-        const topResponse = await axios.get(`${API_BASE}/recommendations.php`, { params: topParams });
+        const topResponse = await axios.get(`${API_BASE}/index.php?endpoint=recommendations`, { params: topParams });
         if (topResponse.data.data && topResponse.data.data.length > 0) {
           data = topResponse.data;
         }
@@ -358,6 +398,27 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
       setLoadingRecommendations(prev => ({ ...prev, [category]: false }));
     }
   }, [getApiCategoryName]);
+
+  // Fetch recommendations when category/step changes
+  useEffect(() => {
+    const currentCategory = getCurrentCategory();
+    if (currentCategory) {
+      // Extract requirements from selected components
+      const requirements = {};
+      if (selectedComponents.cpu) {
+        const socket = getComponentSpec(selectedComponents.cpu, 'socket');
+        if (socket) requirements.socket = socket;
+      }
+      if (selectedComponents.motherboard) {
+        const ramType = getComponentSpec(selectedComponents.motherboard, 'ramType');
+        if (ramType) requirements.type = ramType;
+        const formFactor = getComponentSpec(selectedComponents.motherboard, 'formFactor');
+        if (formFactor) requirements.formFactor = formFactor;
+      }
+      
+      fetchRecommendations(currentCategory.key, requirements);
+    }
+  }, [activeStep, selectedComponents, getCurrentCategory, fetchRecommendations, getComponentSpec]);
 
   // Compatibility functions
   const getCompatibilitySuggestions = useCallback((category) => {
@@ -838,27 +899,200 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   };
 
   const [userLoading, setUserLoading] = useState(false);
+  const [addingToCart, setAddingToCart] = useState(false);
+
+  // Add all build components to cart
+  const handleAddToCart = useCallback(async () => {
+    // Require all required components
+    if (getSelectedRequiredComponentsCount() < getRequiredComponentsCount()) {
+      alert('Build incomplete, please add more components');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token || isTokenExpired(token) || !user) {
+      setShowAuthPrompt(true);
+      return;
+    }
+
+    try {
+      setAddingToCart(true);
+      
+      // Build component IDs object from selected components
+      const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
+      const optionalCategories = ['cooler'];
+      const componentIds = {};
+      const items = [];
+      const pushItem = (comp, cat) => {
+        if (comp && typeof comp.id === 'number') {
+          componentIds[cat] = comp.id;
+          items.push({ component_id: comp.id, quantity: 1 });
+        }
+      };
+      requiredCategories.forEach(cat => pushItem(selectedComponents[cat], cat));
+      optionalCategories.forEach(cat => pushItem(selectedComponents[cat], cat));
+
+      if (items.length === 0) {
+        alert('No valid components found to add to cart.');
+        return;
+      }
+
+      // First, check if these components match an existing prebuilt
+      try {
+        const componentIdsArray = Object.values(componentIds).filter(id => typeof id === 'number');
+        const findPrebuiltUrl = `${API_BASE}/index.php?endpoint=cart&action=find_prebuilt&component_ids=${encodeURIComponent(JSON.stringify(componentIdsArray))}`;
+        const findResponse = await fetch(findPrebuiltUrl, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (findResponse.ok) {
+          const findResult = await findResponse.json();
+          if (findResult.success && findResult.prebuilt) {
+            // Found matching prebuilt - add it as a prebuilt instead of individual components
+            const addPrebuiltResponse = await fetch(`${API_BASE}/index.php?endpoint=cart`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                prebuilt_id: findResult.prebuilt.id,
+                quantity: 1
+              })
+            });
+
+            const addPrebuiltResult = await addPrebuiltResponse.json();
+            if (addPrebuiltResponse.ok && addPrebuiltResult.success) {
+              alert(`Prebuilt PC "${findResult.prebuilt.name}" added to cart successfully!`);
+              if (typeof setCurrentPage === 'function') {
+                // Optional: navigate to cart page
+              }
+              return;
+            } else {
+              // If adding prebuilt failed, fall through to add components individually
+              console.warn('Failed to add prebuilt, falling back to individual components:', addPrebuiltResult.error);
+            }
+          }
+        }
+      } catch (findError) {
+        // If finding prebuilt fails, fall through to add components individually
+        console.warn('Error checking for matching prebuilt, adding components individually:', findError);
+      }
+
+      // No matching prebuilt found or prebuilt add failed - add components individually
+      // Add each item to cart sequentially
+      let successCount = 0;
+      let errorMessages = [];
+      let prebuiltErrors = {}; // Track errors by prebuilt: { prebuilt_id: { name, count, errors[] } }
+      
+      for (const item of items) {
+        try {
+          const response = await fetch(`${API_BASE}/index.php?endpoint=cart`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(item)
+          });
+
+          const result = await response.json().catch(() => ({}));
+          if (response.ok && result.success) {
+            successCount++;
+          } else {
+            const errorMsg = result.error || 'Failed to add component to cart';
+            errorMessages.push(errorMsg);
+            
+            // Check if error is about a component being in a prebuilt
+            if (result.prebuilt_id && result.prebuilt_name) {
+              const prebuiltId = result.prebuilt_id;
+              if (!prebuiltErrors[prebuiltId]) {
+                prebuiltErrors[prebuiltId] = {
+                  name: result.prebuilt_name,
+                  count: 0,
+                  errors: []
+                };
+              }
+              prebuiltErrors[prebuiltId].count++;
+              prebuiltErrors[prebuiltId].errors.push(errorMsg);
+            }
+          }
+        } catch (e) {
+          errorMessages.push(`Error adding component: ${e.message}`);
+        }
+      }
+
+      if (successCount === items.length) {
+        alert(`All ${successCount} components added to cart successfully!`);
+        // Refresh cart count if callback exists
+        if (typeof setCurrentPage === 'function') {
+          // Optional: navigate to cart page
+          // setCurrentPage('cart');
+        }
+      } else if (successCount > 0) {
+        // Build a smarter error message
+        let message = `Added ${successCount} out of ${items.length} components to cart.\n\n`;
+        
+        // If multiple components failed due to the same prebuilt, provide a helpful message
+        const prebuiltErrorKeys = Object.keys(prebuiltErrors);
+        if (prebuiltErrorKeys.length > 0) {
+          message += 'Some components could not be added because they are already included in prebuilt PC(s) in your cart:\n\n';
+          prebuiltErrorKeys.forEach(prebuiltId => {
+            const prebuiltError = prebuiltErrors[prebuiltId];
+            message += `• "${prebuiltError.name}": ${prebuiltError.count} component(s) already in cart\n`;
+          });
+          message += '\nTip: If you want to add this build as a separate prebuilt, you can add it directly from the Prebuilt PCs page instead of adding components individually.';
+        } else {
+          message += 'Some items could not be added:\n' + errorMessages.join('\n');
+        }
+        
+        alert(message);
+      } else {
+        alert(`Failed to add items to cart:\n${errorMessages.join('\n')}`);
+      }
+    } catch (e) {
+      console.error('Add to cart failed:', e);
+      alert(`Failed to add to cart: ${e.message}`);
+    } finally {
+      setAddingToCart(false);
+    }
+  }, [selectedComponents, user, API_BASE, getRequiredComponentsCount, getSelectedRequiredComponentsCount, setCurrentPage]);
+
+  // Show order confirmation modal before placing order
+  const handleCompleteBuild = useCallback(() => {
+    // Require all required components
+    if (getSelectedRequiredComponentsCount() < getRequiredComponentsCount()) {
+      alert('Build incomplete, please add more components');
+      return;
+    }
+    if (hasCriticalCompatibilityIssues) {
+      if (compatibilityStatus.cpu_motherboard === false) {
+        alert('Incompatible: Socket mismatch');
+      } else {
+        alert('Please resolve critical compatibility issues before proceeding.');
+      }
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token || isTokenExpired(token) || !user) {
+      setShowAuthPrompt(true);
+      return;
+    }
+
+    // Show confirmation modal
+    setShowOrderConfirmation(true);
+  }, [selectedComponents, user, hasCriticalCompatibilityIssues, getRequiredComponentsCount, getSelectedRequiredComponentsCount]);
 
   // Create sales order from selected components
-  const handleCompleteBuild = useCallback(async () => {
+  const placeOrder = useCallback(async () => {
     try {
-      // Require all required components
-      if (getSelectedRequiredComponentsCount() < getRequiredComponentsCount()) {
-        alert('Build incomplete, please add more components');
-        return;
-      }
-      if (hasCriticalCompatibilityIssues) {
-        if (compatibilityStatus.cpu_motherboard === false) {
-          alert('Incompatible: Socket mismatch');
-        } else {
-          alert('Please resolve critical compatibility issues before proceeding.');
-        }
-        return;
-      }
-
       const token = localStorage.getItem('token');
       if (!token || isTokenExpired(token) || !user) {
         setShowAuthPrompt(true);
+        setShowOrderConfirmation(false);
         return;
       }
 
@@ -877,6 +1111,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
 
       if (items.length === 0) {
         alert('No valid components found to place an order.');
+        setShowOrderConfirmation(false);
         return;
       }
 
@@ -889,16 +1124,28 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         },
         body: JSON.stringify({
           user_id: user?.id,
-          status: 'Completed',
+          status: 'pending',
           items
         })
       });
 
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) {
+        // Show detailed error message if out of stock items are provided
+        if (result.out_of_stock_items && Array.isArray(result.out_of_stock_items) && result.out_of_stock_items.length > 0) {
+          const outOfStockList = result.out_of_stock_items.map(item => {
+            if (item.available === 0) {
+              return `  • ${item.name} - Out of stock`;
+            } else {
+              return `  • ${item.name} - Requested: ${item.requested}, Available: ${item.available}`;
+            }
+          }).join('\n');
+          throw new Error(`${result.error || 'Insufficient stock'}\n\nOut of stock components:\n${outOfStockList}\n\nPlease select different components or wait for restocking.`);
+        }
         throw new Error(result.error || 'Failed to place order');
       }
 
+      setShowOrderConfirmation(false);
       setOrderConfirmation({ order_id: result.order_id, total: result.total });
     } catch (e) {
       console.error('Order creation failed:', e);
@@ -906,119 +1153,16 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     } finally {
       setPlacingOrder(false);
     }
-  }, [selectedComponents, user, hasCriticalCompatibilityIssues, getRequiredComponentsCount, getSelectedRequiredComponentsCount, API_BASE, branch]);
+  }, [selectedComponents, user, API_BASE, branch]);
 
-  const handleSaveBuild = useCallback(async () => {
-    if (!buildName.trim()) return;
-
-    const token = localStorage.getItem('token');
-    if (userLoading) {
-      // Optionally show a spinner or just return
-      return;
-    }
-    if (!token || isTokenExpired(token) || !user) {
-      setShowAuthPrompt(true);
-      return;
-    }
-
-    const filteredComponents = Object.fromEntries(
-      Object.entries(selectedComponents)
-        .filter(([key, comp]) => comp && typeof comp.id === 'number')
-    );
-
-    const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
-    const missingRequired = requiredCategories.filter(cat => !filteredComponents[cat]);
-    if (missingRequired.length > 0) {
-      alert('Please select valid components for: ' + missingRequired.join(', '));
-      return;
-    }
-
-    setSavingBuild(true);
-    try {
-      const buildData = {
-        name: buildName,
-        description: buildDescription,
-        components: filteredComponents,
-        // Use the precomputed compatibilityScore state, which is updated by the
-        // compatibilityService as components change. The local getLocalCompatibilityScore()
-        // can be 0 if checks haven't run yet when saving.
-        compatibility: compatibilityScore,
-        totalPrice: getTotalPrice(),
-        is_public: isPublic
-      };
-      
-      // Only treat as update if we have a valid numeric build ID
-      const buildIdNum = typeof editingBuildId === 'string' ? parseInt(editingBuildId, 10) : editingBuildId;
-      const isUpdate = isEditing && Number.isFinite(buildIdNum) && buildIdNum > 0;
-
-      const method = isUpdate ? 'PUT' : 'POST';
-      let url = isUpdate 
-        ? `${API_BASE}/index.php?endpoint=builds&id=${buildIdNum}`
-        : `${API_BASE}/index.php?endpoint=builds`;
-      
-      // Authentication check
-      
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      
-      const response = await fetch(url, {
-        method: method,
-        headers,
-        body: JSON.stringify(buildData)
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        const savedBuildId = result.data?.id || result.build_id;
-        
-        // Submit to community (mandatory for all builds)
-        if (savedBuildId) {
-          try {
-            await handleSubmitToCommunity(savedBuildId);
-            // Show success message
-            alert('Your build has been saved and submitted for community review! Admins will review and approve it for the community.');
-          } catch (error) {
-            // If community submission fails but build was saved, still show success for saving
-            console.error('Error during community submission:', error);
-            alert('Build saved successfully, but there was an error submitting for community review. You can submit it for review later from your builds.');
-          }
-        } else {
-          alert('Build saved successfully!');
-        }
-        
-        // Reset form
-        setBuildName('');
-        setBuildDescription('');
-        setShowSaveModal(false);
-        localStorage.removeItem('builditpc-selected-components');
-        localStorage.removeItem('builditpc-editing-build');
-        setIsEditing(false);
-        setEditingBuildId(null);
-        
-        const successMessage = isEditing 
-          ? 'Build updated successfully! You can view it in My Builds.'
-          : 'Build saved successfully! You can view it in My Builds.';
-        
-        alert(successMessage);
-        setCurrentPage('my-builds');
-      } else {
-        alert('Error saving build: ' + (result.error || 'Unknown error'));
-      }
-    } catch (error) {
-      console.error('Error saving build:', error);
-      alert('Error saving build. Please try again.');
-    } finally {
-      setSavingBuild(false);
-    }
-  }, [buildName, buildDescription, selectedComponents, isEditing, editingBuildId, getCompatibilityScore, getTotalPrice, setCurrentPage, user, setUser, userLoading]);
-
-  // Handle community submission
+  // Handle community submission - defined before handleSaveBuild to avoid initialization errors
   const handleSubmitToCommunity = useCallback(async (buildId) => {
+    // Validate build ID
+    if (!buildId || !Number.isInteger(buildId) || buildId <= 0) {
+      console.error('Submission failed: Build ID is required');
+      throw new Error('Build ID is required');
+    }
+
     const token = localStorage.getItem('token');
     if (!token || isTokenExpired(token) || !user) {
       setShowAuthPrompt(true);
@@ -1027,7 +1171,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
 
     setSubmittingToCommunity(true);
     try {
-      const response = await fetch(`${API_BASE}/community_submission.php`, {
+      const response = await fetch(`${API_BASE}/index.php?endpoint=community_submission`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1063,7 +1207,169 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
     } finally {
       setSubmittingToCommunity(false);
     }
-  }, [buildName, buildDescription, getTotalPrice, getCompatibilityScore, user]);
+  }, [buildName, buildDescription, getTotalPrice, compatibilityScore, user, API_BASE]);
+
+  const handleSaveBuild = useCallback(async () => {
+    if (!buildName.trim()) return;
+
+    const token = localStorage.getItem('token');
+    if (userLoading) {
+      // Optionally show a spinner or just return
+      return;
+    }
+    if (!token || isTokenExpired(token) || !user) {
+      setShowAuthPrompt(true);
+      return;
+    }
+
+    // Prevent double-clicking by checking if already saving
+    if (savingBuild) {
+      return;
+    }
+
+    const filteredComponents = Object.fromEntries(
+      Object.entries(selectedComponents)
+        .filter(([key, comp]) => comp && typeof comp.id === 'number')
+    );
+
+    const requiredCategories = ['cpu', 'motherboard', 'gpu', 'ram', 'storage', 'psu', 'case'];
+    const missingRequired = requiredCategories.filter(cat => !filteredComponents[cat]);
+    if (missingRequired.length > 0) {
+      alert('Please select valid components for: ' + missingRequired.join(', '));
+      return;
+    }
+
+    setSavingBuild(true);
+    try {
+      if (saveToPrebuilts) {
+        // Build an automatic description if the user did not provide one
+        // Format: comma-separated component names (like existing prebuilts)
+        const generateAutoDescription = (comps) => {
+          const parts = [];
+          const addIf = (key) => {
+            const c = comps[key];
+            if (c && c.name) {
+              // Extract short name (before first comma or parenthesis if present)
+              const shortName = c.name.split(',')[0].split('(')[0].trim();
+              parts.push(shortName);
+            }
+          };
+          // Add components in order: CPU, Motherboard, GPU, RAM, Storage, PSU, Case, Cooler
+          addIf('cpu');
+          addIf('motherboard');
+          addIf('gpu');
+          addIf('ram');
+          addIf('storage');
+          addIf('psu');
+          addIf('case');
+          addIf('cooler');
+          return parts.join(', ');
+        };
+        // Convert to prebuilts payload
+        const componentIds = {};
+        Object.entries(filteredComponents).forEach(([key, comp]) => {
+          if (comp && typeof comp.id === 'number') {
+            componentIds[key] = comp.id;
+          }
+        });
+
+        const prebuiltData = {
+          name: buildName,
+          category: 'Custom',
+          description: (buildDescription && buildDescription.trim().length > 0)
+            ? buildDescription
+            : generateAutoDescription(filteredComponents),
+          component_ids: componentIds,
+          price: getTotalPrice(),
+          performance: {},
+          features: [
+            filteredComponents.cpu?.name || null,
+            filteredComponents.gpu?.name || null,
+            filteredComponents.ram?.name || null,
+            filteredComponents.storage?.name || null
+          ].filter(Boolean),
+          in_stock: 1,
+          is_hidden: 0
+        };
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(getApiEndpoint('prebuilts'), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(prebuiltData)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || 'Failed to save as prebuilt');
+        }
+        alert('Prebuilt created successfully. You can manage it in Prebuilt Management.');
+        setShowSaveModal(false);
+      } else {
+        const buildData = {
+          name: buildName,
+          description: buildDescription,
+          components: filteredComponents,
+          compatibility: compatibilityScore,
+          totalPrice: getTotalPrice(),
+          is_public: isPublic
+        };
+        const buildIdNum = typeof editingBuildId === 'string' ? parseInt(editingBuildId, 10) : editingBuildId;
+        const isUpdate = isEditing && Number.isFinite(buildIdNum) && buildIdNum > 0;
+        const method = isUpdate ? 'PUT' : 'POST';
+        let url = isUpdate 
+          ? `${API_BASE}/index.php?endpoint=builds&id=${buildIdNum}`
+          : `${API_BASE}/index.php?endpoint=builds`;
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const response = await fetch(url, { method, headers, body: JSON.stringify(buildData) });
+        const result = await response.json();
+        if (result.success) {
+          // Extract build ID: for updates use editingBuildId, for creates use response
+          const rawBuildId = isUpdate 
+            ? (buildIdNum || result.build_id || result.data?.id)
+            : (result.build_id || result.data?.id);
+          
+          // Convert to integer and validate
+          const savedBuildId = rawBuildId ? parseInt(rawBuildId, 10) : null;
+          
+          // Only submit to community if build is public and we have a valid build ID
+          if (isPublic && savedBuildId && Number.isInteger(savedBuildId) && savedBuildId > 0) {
+            try {
+              await handleSubmitToCommunity(savedBuildId);
+              alert('Your build has been saved and submitted for community review!');
+            } catch (error) {
+              console.error('Error during community submission:', error);
+              alert('Build saved successfully, but there was an error submitting for community review.');
+            }
+          }
+          
+          setBuildName('');
+          setBuildDescription('');
+          setShowSaveModal(false);
+          localStorage.removeItem('builditpc-selected-components');
+          localStorage.removeItem('builditpc-editing-build');
+          setIsEditing(false);
+          setEditingBuildId(null);
+          const successMessage = isEditing ? 'Build updated successfully! You can view it in My Builds.' : 'Build saved successfully! You can view it in My Builds.';
+          alert(successMessage);
+          setCurrentPage('my-builds');
+        } else {
+          if (response.status === 409) {
+            alert('A build with this name and configuration already exists.');
+          } else {
+            alert('Error saving build: ' + (result.error || 'Unknown error'));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error saving build:', error);
+      alert('Error saving build. Please try again.');
+    } finally {
+      setSavingBuild(false);
+    }
+  }, [buildName, buildDescription, selectedComponents, isEditing, editingBuildId, compatibilityScore, getTotalPrice, setCurrentPage, user, setUser, userLoading, saveToPrebuilts, isPublic, handleSubmitToCommunity]);
 
   // Main useEffect for initialization and prebuilt selection
   useEffect(() => {
@@ -1662,10 +1968,86 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
         </div>
       )}
 
-      <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-8">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8">
+      <div className="w-full px-2 sm:px-4 lg:px-6 xl:px-8 2xl:px-12 py-4 sm:py-6 lg:py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
           {/* Main Content Area - Responsive width for better space utilization */}
-          <div className="xl:col-span-8 2xl:col-span-9 space-y-6 lg:space-y-8">
+          <div className="lg:col-span-8 xl:col-span-8 2xl:col-span-9 space-y-4 sm:space-y-6 lg:space-y-8">
+            {/* Performance Analysis */}
+            {getSelectedRequiredComponentsCount() >= 3 && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
+                <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+                  <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
+                  <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Performance Analysis</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Monitor className="w-5 h-5 text-blue-600" />
+                      <span className="font-medium text-blue-900">Gaming</span>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-700">
+                      {Math.round(performance.gamingScore)}%
+                    </div>
+                    <div className="w-full bg-blue-200 rounded-full h-2 mt-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${performance.gamingScore}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings className="w-5 h-5 text-purple-600" />
+                      <span className="font-medium text-purple-900">Workstation</span>
+                    </div>
+                    <div className="text-2xl font-bold text-purple-700">
+                      {Math.round(performance.workstationScore)}%
+                    </div>
+                    <div className="w-full bg-purple-200 rounded-full h-2 mt-2">
+                      <div 
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${performance.workstationScore}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Thermometer className="w-5 h-5 text-green-600" />
+                      <span className="font-medium text-green-900">Cooling</span>
+                    </div>
+                    <div className="text-2xl font-bold text-green-700">
+                      {Math.round(performance.coolingScore)}%
+                    </div>
+                    <div className="w-full bg-green-200 rounded-full h-2 mt-2">
+                      <div 
+                        className="bg-green-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${performance.coolingScore}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <ArrowRight className="w-5 h-5 text-orange-600" />
+                      <span className="font-medium text-orange-900">Upgrade Path</span>
+                    </div>
+                    <div className="text-2xl font-bold text-orange-700">
+                      {Math.round(performance.upgradeScore)}%
+                    </div>
+                    <div className="w-full bg-orange-200 rounded-full h-2 mt-2">
+                      <div 
+                        className="bg-orange-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${performance.upgradeScore}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Enhanced Progress Steps */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-6">
@@ -1712,7 +2094,7 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 </div>
               </div>
               
-              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-8 2xl:grid-cols-8 gap-3 lg:gap-4">
+              <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-8 2xl:grid-cols-8 gap-2 sm:gap-3 lg:gap-4">
                 {componentCategories.map((category, index) => {
                   const isSelected = selectedComponents[category.key];
                   const isActive = index + 1 === activeStep;
@@ -1811,12 +2193,12 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 </div>
               </div>
               
-              <div className="p-6 lg:p-8">
+              <div className="p-4 sm:p-6 lg:p-8">
                 {/* Enhanced Compatibility Section */}
                 <div className="mb-8">
                   {/* Compatibility Score and Comparison Section */}
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-6 mb-6">
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4 sm:p-6 mb-4 sm:mb-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4">
                       {/* Left side - Compatibility Score with detailed bar */}
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-3">
@@ -1927,86 +2309,10 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 />
               </div>
             </div>
-
-            {/* Performance Analysis */}
-            {getSelectedRequiredComponentsCount() >= 3 && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <TrendingUp className="w-6 h-6 text-purple-600" />
-                  <h2 className="text-xl font-semibold text-gray-900">Performance Analysis</h2>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Monitor className="w-5 h-5 text-blue-600" />
-                      <span className="font-medium text-blue-900">Gaming</span>
-                    </div>
-                    <div className="text-2xl font-bold text-blue-700">
-                      {Math.round(performance.gamingScore)}%
-                    </div>
-                    <div className="w-full bg-blue-200 rounded-full h-2 mt-2">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${performance.gamingScore}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Settings className="w-5 h-5 text-purple-600" />
-                      <span className="font-medium text-purple-900">Workstation</span>
-                    </div>
-                    <div className="text-2xl font-bold text-purple-700">
-                      {Math.round(performance.workstationScore)}%
-                    </div>
-                    <div className="w-full bg-purple-200 rounded-full h-2 mt-2">
-                      <div 
-                        className="bg-purple-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${performance.workstationScore}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Thermometer className="w-5 h-5 text-green-600" />
-                      <span className="font-medium text-green-900">Cooling</span>
-                    </div>
-                    <div className="text-2xl font-bold text-green-700">
-                      {Math.round(performance.coolingScore)}%
-                    </div>
-                    <div className="w-full bg-green-200 rounded-full h-2 mt-2">
-                      <div 
-                        className="bg-green-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${performance.coolingScore}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <ArrowRight className="w-5 h-5 text-orange-600" />
-                      <span className="font-medium text-orange-900">Upgrade Path</span>
-                    </div>
-                    <div className="text-2xl font-bold text-orange-700">
-                      {Math.round(performance.upgradeScore)}%
-                    </div>
-                    <div className="w-full bg-orange-200 rounded-full h-2 mt-2">
-                      <div 
-                        className="bg-orange-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${performance.upgradeScore}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Enhanced Sidebar - Responsive width for better space utilization */}
-          <div className="xl:col-span-4 2xl:col-span-3 space-y-6 lg:space-y-8">
+          <div className="lg:col-span-4 xl:col-span-4 2xl:col-span-3 space-y-4 sm:space-y-6 lg:space-y-8">
             {/* Compatibility Status */}
             <CompatibilityChecker 
               compatibilityStatus={compatibilityStatus}
@@ -2016,9 +2322,9 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
             />
 
             {/* Enhanced Build Summary */}
-            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 sm:p-6">
               {/* Header Section */}
-              <div className="mb-8">
+              <div className="mb-4 sm:mb-6 lg:mb-8">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-4">
                     <div className="p-3 bg-gradient-to-br from-green-100 to-blue-100 rounded-xl">
@@ -2038,10 +2344,10 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 </div>
                 
                 {/* Enhanced Progress Section */}
-                <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-4 mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-gray-700">Build Progress</span>
-                    <span className="text-sm font-bold text-gray-900">
+                <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-2 sm:mb-3">
+                    <span className="text-xs sm:text-sm font-semibold text-gray-700">Build Progress</span>
+                    <span className="text-xs sm:text-sm font-bold text-gray-900">
                       {getSelectedRequiredComponentsCount()}/{getRequiredComponentsCount()} Components
                     </span>
                   </div>
@@ -2079,20 +2385,20 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
               </div>
 
               {/* Enhanced Selected Components */}
-              <div className="mb-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-lg font-semibold text-gray-900">Selected Components</h4>
-                  <span className="text-sm text-gray-500">{getSelectedComponentsCount()} items</span>
+              <div className="mb-6 sm:mb-8">
+                <div className="flex items-center justify-between mb-3 sm:mb-4">
+                  <h4 className="text-base sm:text-lg font-semibold text-gray-900">Selected Components</h4>
+                  <span className="text-xs sm:text-sm text-gray-500">{getSelectedComponentsCount()} items</span>
                 </div>
                 
-                <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
+                <div className="space-y-2 sm:space-y-3 max-h-64 sm:max-h-80 overflow-y-auto pr-1 sm:pr-2">
                   {Object.entries(selectedComponents).map(([category, component]) => (
                     component && (
-                      <div key={category} className="group bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl border border-gray-200 p-4 hover:shadow-md transition-all duration-200">
+                      <div key={category} className="group bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl border border-gray-200 p-3 sm:p-4 hover:shadow-md transition-all duration-200">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 flex-1 min-w-0">
-                            <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                              <span className="text-sm font-bold text-green-600">
+                          <div className="flex items-center gap-2 sm:gap-3 lg:gap-4 flex-1 min-w-0">
+                            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-green-100 to-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs sm:text-sm font-bold text-green-600">
                                 {category === 'motherboard' ? 'MB' : 
                                  category === 'gpu' ? 'GPU' : 
                                  category === 'storage' ? 'SSD' : 
@@ -2102,9 +2408,9 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <h5 className="font-semibold text-gray-900 text-sm mb-1 truncate">{component.name}</h5>
-                              <div className="flex items-center gap-3 text-xs text-gray-600">
-                                <span className="font-bold text-green-600 text-sm">{formatCurrencyPHP(component.price)}</span>
+                              <h5 className="font-semibold text-gray-900 text-xs sm:text-sm mb-1 truncate">{component.name}</h5>
+                              <div className="flex items-center gap-2 sm:gap-3 text-xs text-gray-600">
+                                  <span className="font-bold text-green-600 text-xs sm:text-sm">{formatCurrencyPHP(component.price)}</span>
                                 <span className="w-1 h-1 bg-gray-400 rounded-full"></span>
                                 <span className="truncate">
                                   {component.socket && `Socket: ${component.socket}`}
@@ -2149,8 +2455,8 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
               </div>
 
               {/* Enhanced Price Summary */}
-              <div className="bg-gradient-to-r from-gray-50 to-green-50 rounded-xl p-6 border border-gray-200">
-                <div className="flex items-center gap-3 mb-6">
+              <div className="bg-gradient-to-r from-gray-50 to-green-50 rounded-xl p-4 sm:p-6 border border-gray-200">
+                <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
                   <div className="p-2 bg-green-100 rounded-lg">
                     <span className="text-green-600 text-lg font-bold">₱</span>
                   </div>
@@ -2184,23 +2490,24 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                       onClick={() => setShowSaveModal(true)}
                       className={`flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold text-lg transition-all duration-200 ${
                         user 
-                          ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg hover:shadow-xl hover:from-green-700 hover:to-green-800 transform hover:scale-105' 
+                          ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg hover:shadow-xl hover:from-blue-700 hover:to-blue-800 transform hover:scale-105' 
                           : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       }`}
                       disabled={!user}
                       title={!user ? 'Please log in to save builds' : ''}
                     >
                       <Save className="w-5 h-5" />
-                      {isEditing ? 'Update Build' : 'Save Build'}
+                      {isEditing ? (saveToPrebuilts ? 'Update Prebuilt' : 'Update Build') : (saveToPrebuilts ? 'Save Prebuilt' : 'Save Build')}
                       {!user && <span className="text-sm ml-2 opacity-75">(Login Required)</span>}
                     </button>
                     
+                    {!hideCompleteButton && (
                     <button
                       onClick={handleCompleteBuild}
                       className={`flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold text-lg transition-all duration-200 ${
                         getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
                           ? getLocalCompatibilityScore() === 100
-                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg hover:shadow-xl hover:from-blue-700 hover:to-purple-700 transform hover:scale-105'
+                            ? 'bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg hover:shadow-xl hover:from-green-700 hover:to-green-800 transform hover:scale-105'
                             : 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg hover:shadow-xl hover:from-orange-600 hover:to-red-600'
                           : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       }`}
@@ -2217,18 +2524,51 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                             ? (
                               <div className="flex items-center justify-center gap-3">
                                 <ShoppingCart className="w-5 h-5" />
-                                <span>Complete Build!</span>
+                                <span>Buy PC Build!</span>
                               </div>
                             )
                             : (
                               <div className="flex items-center justify-center gap-3">
                                 <AlertTriangle className="w-5 h-5" />
-                                <span>Complete Build (with warnings)</span>
+                                <span>Buy PC Build</span>
                               </div>
                             )
                           : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
                       )}
                     </button>
+                    )}
+                    
+                    {/* Add to Cart Button */}
+                    {!hideCompleteButton && (
+                    <button
+                      onClick={handleAddToCart}
+                      className={`flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                        getSelectedRequiredComponentsCount() === getRequiredComponentsCount()
+                          ? user
+                            ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg hover:shadow-xl hover:from-blue-700 hover:to-blue-800 transform hover:scale-105'
+                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      }`}
+                      disabled={getSelectedRequiredComponentsCount() < getRequiredComponentsCount() || !user || addingToCart}
+                      title={!user ? 'Please log in to add items to cart' : ''}
+                    >
+                      {addingToCart ? (
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                          <span>Adding to cart...</span>
+                        </div>
+                      ) : (
+                        getSelectedRequiredComponentsCount() === getRequiredComponentsCount() 
+                          ? (
+                            <div className="flex items-center justify-center gap-3">
+                              <Package className="w-5 h-5" />
+                              <span>Add to Cart</span>
+                            </div>
+                          )
+                          : `Select ${getRequiredComponentsCount() - getSelectedRequiredComponentsCount()} more components`
+                      )}
+                    </button>
+                    )}
                   </div>
                   
                   {/* Secondary Actions */}
@@ -2347,13 +2687,13 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                 </p>
               </div>
 
-                  {/* Build Visibility Section */}
-                  <div className="bg-gray-50 rounded-xl p-4">
+                  {/* Build Visibility Section - hidden for prebuilts flow */}
+                  <div className="bg-gray-50 rounded-xl p-4" style={{display: saveToPrebuilts ? 'none' : undefined}}>
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <h3 className="text-sm font-semibold text-gray-900">Build Visibility</h3>
                         <p className="text-xs text-gray-600 mt-1">
-                          Your build will be visible to other users in the Community Builds section. You can change this later.
+                          Your build will be visible to other users in the PC Build Sharing section. You can change this later.
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
@@ -2375,34 +2715,10 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                     </button>
                   </div>
                 </div>
+
               </div>
 
-                  {/* Community Submission Section - Always On */}
-                  <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-1 p-2 bg-blue-100 rounded-full">
-                        <Users className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="block text-sm font-semibold text-gray-900 mb-1">
-                          Community Review Required
-                        </h3>
-                        <p className="text-sm text-gray-700 mb-3">
-                          All builds are submitted for admin review to ensure quality. Your build will be 
-                          reviewed before being featured in the Community Builds section.
-                        </p>
-                        <div className="p-3 bg-blue-100 border border-blue-300 rounded-lg">
-                          <div className="flex items-center gap-2 text-sm text-blue-800 mb-1">
-                            <CheckCircle className="w-4 h-4" />
-                            <span className="font-medium">Review Required</span>
-                          </div>
-                          <p className="text-xs text-blue-700">
-                            Your build will be reviewed by our team. You'll be notified once it's approved or if any changes are needed.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+              {/* Close Left Column */}
               </div>
 
                 {/* Right Column - Build Summary */}
@@ -2498,6 +2814,181 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Review Confirmation Modal */}
+      {showOrderConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl max-w-4xl w-full shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 rounded-t-xl z-10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center">
+                    <ShoppingCart className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">Review Your Build</h2>
+                    <p className="text-sm text-gray-600">Please review your components before placing the order</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowOrderConfirmation(false)}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Components List */}
+            <div className="p-6">
+              <div className="space-y-4">
+                {componentCategories
+                  .filter(cat => {
+                    const component = selectedComponents[cat.key];
+                    return component !== null && component !== undefined;
+                  })
+                  .map((category) => {
+                    const component = selectedComponents[category.key];
+                    if (!component) return null;
+
+                    const categoryName = category.name;
+                    const Icon = category.icon;
+                    const price = typeof component.price === 'string' ? parseFloat(component.price) : (component.price || 0);
+
+                    return (
+                      <div
+                        key={category.key}
+                        className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                      >
+                        <div className="flex items-start gap-4">
+                          {/* Component Image */}
+                          <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <img
+                              src={getComponentImage(component, getComponentType(component))}
+                              alt={component.name || 'Component'}
+                              className="w-full h-full object-cover rounded-lg"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                if (e.target.nextSibling) {
+                                  e.target.nextSibling.style.display = 'flex';
+                                }
+                              }}
+                            />
+                            <div className="hidden w-full h-full items-center justify-center text-gray-400">
+                              <Icon className="w-10 h-10" />
+                            </div>
+                          </div>
+
+                          {/* Component Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Icon className="w-4 h-4 text-gray-500" />
+                                  <span className="text-sm font-medium text-gray-500 uppercase">{categoryName}</span>
+                                </div>
+                                <h3 className="font-semibold text-gray-900 text-lg mb-1">{component.name}</h3>
+                                {component.brand && (
+                                  <p className="text-sm text-gray-600 mb-2">{component.brand}</p>
+                                )}
+                                <div className="flex items-center">
+                                  <span className="text-xl font-bold text-green-600">{formatCurrencyPHP(price)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Price Breakdown */}
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Price Breakdown</h3>
+                <div className="space-y-3 mb-4">
+                  {componentCategories
+                    .filter(cat => {
+                      const component = selectedComponents[cat.key];
+                      return component !== null && component !== undefined;
+                    })
+                    .map((category) => {
+                      const component = selectedComponents[category.key];
+                      if (!component) return null;
+
+                      const price = typeof component.price === 'string' ? parseFloat(component.price) : (component.price || 0);
+                      
+                      return (
+                        <div
+                          key={category.key}
+                          className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-gray-900">{component.name}</span>
+                            <span className="text-xs text-gray-500 ml-2">({category.name})</span>
+                          </div>
+                          <span className="text-base font-semibold text-gray-900 ml-4 flex-shrink-0">
+                            {formatCurrencyPHP(price)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+
+                <div className="space-y-3 pt-3 border-t border-gray-200">
+                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
+                    <span className="text-gray-600 font-medium">Subtotal:</span>
+                    <span className="text-lg font-semibold text-gray-900">{formatCurrencyPHP(getTotalPrice())}</span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border-2 border-green-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                        <span className="text-green-600 font-bold">₱</span>
+                      </div>
+                      <span className="text-lg font-semibold text-gray-900">Total Price:</span>
+                    </div>
+                    <span className="text-3xl font-bold text-green-600">
+                      {formatCurrencyPHP(getTotalPrice())}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-b-xl">
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowOrderConfirmation(false)}
+                  className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-colors"
+                  disabled={placingOrder}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={placeOrder}
+                  disabled={placingOrder}
+                  className="px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-800 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-2"
+                >
+                  {placingOrder ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      <span>Placing Order...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingCart className="w-5 h-5" />
+                      <span>Confirm Purchase</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
@@ -2641,4 +3132,4 @@ const PCAssembly = ({ setCurrentPage, selectedComponents: prebuiltComponents, se
   )
 }
 
-export default PCAssembly 
+export default PCAssembly;

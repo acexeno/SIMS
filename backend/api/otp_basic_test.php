@@ -1,0 +1,29 @@
+<?php
+// Ultra-simple OTP test endpoint
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+try {
+    echo json_encode([
+        'status' => 'success',
+        'message' => 'OTP endpoint is accessible',
+        'timestamp' => date('Y-m-d H:i:s'),
+        'method' => $_SERVER['REQUEST_METHOD'],
+        'uri' => $_SERVER['REQUEST_URI'] ?? 'unknown'
+    ]);
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'OTP Test Failed',
+        'error' => $e->getMessage()
+    ]);
+}
+?>

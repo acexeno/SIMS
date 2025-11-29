@@ -304,7 +304,7 @@ const ModernChatUI = ({
                  className={`p-2 rounded-lg transition-colors ${
                    loading || !newMessage.trim() || sessionStatus === 'resolved'
                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                     : 'bg-blue-500 text-white hover:bg-blue-600'
+                     : 'bg-green-500 text-white hover:bg-green-600'
                  }`}
                  onClick={handleSendMessage}
                  disabled={loading || !newMessage.trim() || sessionStatus === 'resolved'}

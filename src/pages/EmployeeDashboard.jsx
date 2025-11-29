@@ -25,10 +25,10 @@ import SuperAdminPrebuiltPCs from './SuperAdminPrebuiltPCs.jsx';
 import DynamicChatAccess from '../components/DynamicChatAccess';
 import { useNotifications } from '../contexts/NotificationContext';
 import Notifications from './Notifications.jsx';
-import NotificationToast from '../components/NotificationToast';
 import PCAssembly from './PCAssembly.jsx';
 import AdminReports from '../components/AdminReports';
 import SystemReports from '../components/SystemReports';
+import ComponentSearchInput from '../components/ComponentSearchInput';
 
 // Helper: check JWT expiry (base64url safe)
 function isTokenExpired(token) {
@@ -88,15 +88,15 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   // Branch filter: null = All (global), or 'BULACAN' / 'MARIKINA'
   const [branch, setBranch] = useState(null);
   const { unreadCount, notifications, markAsRead } = useNotifications();
-  const [showToast, setShowToast] = useState(true);
   const [initialInventoryAccess, setInitialInventoryAccess] = useState(user?.can_access_inventory);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState(null);
 
 
 
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
+    const fetchData = async (showLoading = false) => {
+      if (showLoading) setIsLoading(true);
       setError(null);
       try {
         // Wait for authentication to be ready before making API calls
@@ -131,13 +131,14 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
         setError('Error fetching dashboard data.');
         console.error('Error fetching dashboard data:', error);
       } finally {
-        setIsLoading(false);
+        if (showLoading) setIsLoading(false);
       }
     };
     
     // Add a small delay before initial fetch to ensure login is complete
-    const timeoutId = setTimeout(fetchData, 200);
-    const interval = setInterval(fetchData, 10000);
+    const timeoutId = setTimeout(() => fetchData(true), 200);
+    // Reduce polling frequency to prevent blinking - only poll every 60 seconds
+    const interval = setInterval(() => fetchData(false), 60000);
     return () => {
       clearTimeout(timeoutId);
       clearInterval(interval);
@@ -235,40 +236,77 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
     if (dashboardSalesChartType === 'monthly') {
       dashboardSalesChartData = reports?.monthly_sales || [];
       dashboardSalesChartTitle = 'Monthly Sales';
-      dashboardSalesChartComponent = (
+      dashboardSalesChartComponent = dashboardSalesChartData.length > 0 ? (
         <ResponsiveContainer width="100%" height={200}>
-          {dashboardSalesChartData.length > 0 ? (
-            <LineChart data={dashboardSalesChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" label={{ value: 'Month', position: 'insideBottomRight', offset: 0 }} />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="total_sales" stroke="#A020F0" strokeWidth={3} />
-            </LineChart>
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-400 text-lg">No data available</div>
-          )}
+          <LineChart data={dashboardSalesChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="month" label={{ value: 'Month', position: 'insideBottomRight', offset: 0 }} />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="total_sales" stroke="#A020F0" strokeWidth={3} />
+          </LineChart>
         </ResponsiveContainer>
+      ) : (
+        <div className="h-[280px] flex items-center justify-center p-6">
+          <div className="text-center max-w-md">
+            <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-500 mb-3">No data available</h3>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
+          </div>
+        </div>
+      );
+    } else if (dashboardSalesChartType === 'weekly') {
+      dashboardSalesChartData = reports?.weekly_sales || [];
+      dashboardSalesChartTitle = 'Weekly Sales';
+      dashboardSalesChartComponent = dashboardSalesChartData.length > 0 ? (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={dashboardSalesChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="week" label={{ value: 'Week', position: 'insideBottomRight', offset: 0 }} />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="total_sales" stroke="#36A2EB" strokeWidth={3} />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="h-[280px] flex items-center justify-center p-6">
+          <div className="text-center max-w-md">
+            <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-500 mb-3">No data available</h3>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
+          </div>
+        </div>
       );
     } else if (dashboardSalesChartType === 'daily') {
       dashboardSalesChartData = reports?.daily_sales || [];
       dashboardSalesChartTitle = 'Daily Sales (Last 30 Days)';
-      dashboardSalesChartComponent = (
+      dashboardSalesChartComponent = dashboardSalesChartData.length > 0 ? (
         <ResponsiveContainer width="100%" height={200}>
-          {dashboardSalesChartData.length > 0 ? (
-            <ReBarChart data={dashboardSalesChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" label={{ value: 'Day', position: 'insideBottomRight', offset: 0 }} />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="total_sales" fill="#36A2EB" />
-            </ReBarChart>
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-400 text-lg">No data available</div>
-          )}
+          <ReBarChart data={dashboardSalesChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="day" label={{ value: 'Day', position: 'insideBottomRight', offset: 0 }} />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="total_sales" fill="#36A2EB" />
+          </ReBarChart>
         </ResponsiveContainer>
+      ) : (
+        <div className="h-[280px] flex items-center justify-center p-6">
+          <div className="text-center max-w-md">
+            <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-500 mb-3">No data available</h3>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              This could be because there are no completed orders yet or the system is still collecting data.
+            </p>
+          </div>
+        </div>
       );
     }
     return (
@@ -309,7 +347,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Top Seller</p>
-                <p className="text-base font-bold text-gray-900 truncate max-w-xs" title={topSeller}>{topSeller}</p>
+                <p className="text-base font-bold text-gray-900 break-words leading-tight" title={topSeller}>{topSeller}</p>
               </div>
             </div>
           </div>
@@ -325,6 +363,7 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
               onChange={e => setDashboardSalesChartType(e.target.value)}
             >
               <option value="monthly">Monthly Sales</option>
+              <option value="weekly">Weekly Sales</option>
               <option value="daily">Daily Sales</option>
             </select>
           </div>
@@ -418,49 +457,60 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
         )}
       </div>
       {/* Search, Filter, Sort Controls */}
-      <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between mb-2">
-        <div className="flex gap-2 flex-1">
-          <input
-            type="text"
-            placeholder="Search by name or brand..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="px-4 py-2 border rounded-lg w-full md:w-64"
-            style={{ minHeight: '42px' }}
-          />
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            className="px-4 py-2 border rounded-lg"
-            style={{ minHeight: '42px' }}
-          >
-            <option value="all">All Components</option>
-            {mainCategories.map(cat => (
-              <option key={cat.key} value={cat.key}>{cat.key}</option>
-            ))}
-          </select>
-          <select
-            value={selectedBrand}
-            onChange={e => setSelectedBrand(e.target.value)}
-            className="px-4 py-2 border rounded-lg"
-            style={{ minHeight: '42px' }}
-          >
-            <option value="all">All Brands</option>
-            {brandOptions.filter(b => b !== 'all').map(b => (
-              <option key={b} value={b}>{b}</option>
-            ))}
-          </select>
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
-            className="px-4 py-2 border rounded-lg"
-            style={{ minHeight: '42px' }}
-          >
-            <option value="name">Sort by Name</option>
-            <option value="price">Sort by Price</option>
-            <option value="stock">Sort by Stock</option>
-            <option value="category">Sort by Category</option>
-          </select>
+      <div className="mb-2">
+        <div className="flex flex-col gap-3">
+          {/* Search Bar - Full width on mobile, fixed width on larger screens */}
+          <div className="w-full">
+            <input
+              type="text"
+              placeholder="Search by name or brand..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="px-4 py-2 border rounded-lg w-full"
+              style={{ minHeight: '42px' }}
+            />
+          </div>
+          
+          {/* Filter Controls - Stack on mobile, row on larger screens */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select
+              value={selectedCategory}
+              onChange={e => setSelectedCategory(e.target.value)}
+              className="px-4 py-2 border rounded-lg flex-1"
+              style={{ minHeight: '42px' }}
+            >
+              <option value="all">All Components</option>
+              {mainCategories.map(cat => (
+                <option key={cat.key} value={cat.key}>{cat.key}</option>
+              ))}
+            </select>
+            <select
+              value={selectedBrand}
+              onChange={e => setSelectedBrand(e.target.value)}
+              className="px-4 py-2 border rounded-lg flex-1"
+              style={{ minHeight: '42px' }}
+            >
+              <option value="all">All Brands</option>
+              {brandOptions.filter(b => b !== 'all').map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Sort Control - Separate row on mobile, inline on larger screens */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+              className="px-4 py-2 border rounded-lg w-full sm:w-48"
+              style={{ minHeight: '42px' }}
+            >
+              <option value="name">Sort by Name</option>
+              <option value="price">Sort by Price</option>
+              <option value="stock">Sort by Stock</option>
+              <option value="category">Sort by Category</option>
+            </select>
+          </div>
         </div>
       </div>
       <div className="bg-white rounded-2xl shadow-lg border overflow-x-auto">
@@ -480,7 +530,8 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
             {(filtered && filtered.length > 0) ? filtered.map((item) => {
               const cat = categories.find(c => String(c.id) === String(item.category_id));
               const displayCat = cat ? (formalCategoryNames[cat.name] || cat.name) : item.category_id;
-              const imgSrc = item.image_url || getComponentImage(item.name);
+              // Use image_url if it exists and is not empty/null, otherwise fallback to getComponentImage
+              const imgSrc = (item.image_url && item.image_url.trim() !== '') ? item.image_url : getComponentImage(item.name);
               return (
                 <tr key={item.id}>
                   <td className="w-20 px-4 py-4 whitespace-nowrap align-middle">
@@ -489,7 +540,16 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                       alt={item.name}
                       className="w-14 h-14 object-contain rounded border cursor-pointer hover:shadow-lg transition duration-150"
                       onClick={() => setModalItem(item)}
-                      onError={e => { e.target.onerror = null; e.target.src = '/images/components/default.png'; }}
+                      onError={e => { 
+                        e.target.onerror = null; 
+                        // Try getComponentImage fallback first, then default
+                        const fallbackSrc = getComponentImage(item.name);
+                        if (fallbackSrc !== imgSrc) {
+                          e.target.src = fallbackSrc;
+                        } else {
+                          e.target.src = '/images/components/default.png';
+                        }
+                      }}
                     />
                   </td>
                   <td className="px-2 py-4 whitespace-normal text-sm font-medium text-gray-900 break-words max-w-md flex items-center gap-3 truncate" style={{ maxWidth: '320px' }} title={item.name}>
@@ -514,8 +574,8 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                         onClick={async () => {
                           if (!window.confirm(`Delete '${item.name}'?`)) return;
                           try {
-                            // Assumption: backend supports delete_component via POST
-                            const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=delete_component`, {
+                            // Send id in both query string and body to survive token-refresh retries
+                            const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=delete_component&id=${encodeURIComponent(item.id)}`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ id: item.id })
@@ -557,7 +617,15 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
             {/* Image Section */}
             <div className="flex-shrink-0 flex items-center justify-center bg-gray-50 rounded-l-2xl md:rounded-l-2xl md:rounded-r-none p-10 md:w-1/2 w-full border-b md:border-b-0 md:border-r">
               <div className="flex items-center justify-center w-full max-w-[500px] max-h-[400px] bg-white rounded border overflow-hidden">
-                <img src={getComponentImage(modalItem.name)} alt={modalItem.name} className="max-w-full max-h-[400px] object-contain" />
+                <img 
+                  src={modalItem.image_url || getComponentImage(modalItem.name)} 
+                  alt={modalItem.name} 
+                  className="max-w-full max-h-[400px] object-contain" 
+                  onError={e => { 
+                    e.target.onerror = null; 
+                    e.target.src = getComponentImage(modalItem.name);
+                  }}
+                />
               </div>
             </div>
             {/* Details Section */}
@@ -627,9 +695,9 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
   const OrdersTab = () => (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="page-title">Orders Management</h2>
+        <h2 className="page-title">Orders</h2>
         <button
-          className="bg-indigo-600 text-white px-5 py-2 rounded-xl hover:bg-indigo-700 flex items-center gap-2 shadow-lg"
+          className="btn btn-primary shadow"
           onClick={() => setOrderModalOpen(true)}
         >
           <Plus className="h-4 w-4" />
@@ -665,12 +733,17 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.order_date}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  <button className="text-blue-600 hover:text-blue-900">
+                  <button 
+                    className="text-blue-600 hover:text-blue-900"
+                    onClick={() => {
+                      setEditingOrder(order);
+                      setOrderModalOpen(true);
+                    }}
+                    title="Edit Order"
+                  >
                     <Edit className="h-4 w-4" />
                   </button>
-                  <button className="text-red-600 hover:text-red-900">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {/* Employees can only edit orders, not delete them */}
                 </td>
               </tr>
             )) : <tr><td colSpan="6" className="text-center py-4">No order data available.</td></tr>}
@@ -678,16 +751,19 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
         </table>
       </div>
       {orderModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setOrderModalOpen(false)}>
-          <div className="bg-white rounded-2xl shadow-lg p-6 max-w-xl w-full relative" onClick={e => e.stopPropagation()}>
-            <button className="absolute top-4 right-4 text-gray-500 hover:text-gray-800" onClick={() => setOrderModalOpen(false)}>×</button>
-            <h3 className="text-xl font-bold mb-4">Create Order</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-6" onClick={() => { setOrderModalOpen(false); setEditingOrder(null); }}>
+          <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-6xl w-full max-h-[95vh] overflow-y-auto relative modal-scrollbar" onClick={e => e.stopPropagation()}>
+            <button className="absolute top-6 right-6 text-gray-500 hover:text-gray-800 z-10 text-2xl font-bold" onClick={() => { setOrderModalOpen(false); setEditingOrder(null); }}>×</button>
+            <h3 className="text-2xl font-bold mb-6 text-gray-800">{editingOrder ? 'Edit Order' : 'Create Order'}</h3>
             <CreateOrderForm
               user={user}
               inventory={inventory}
-              onCancel={() => setOrderModalOpen(false)}
+              categories={categories}
+              editingOrder={editingOrder}
+              onCancel={() => { setOrderModalOpen(false); setEditingOrder(null); }}
               onCreated={() => {
                 setOrderModalOpen(false)
+                setEditingOrder(null)
                 authorizedFetch(`${API_BASE}/index.php?endpoint=orders`).then(r => r.json()).then(d => {
                   if (d && d.success) setOrders(d.data || [])
                 }).catch(() => {})
@@ -733,8 +809,24 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
         }
         return <InventoryTab />
       case 'orders-management':
+        if (user.can_access_orders === 0 || user.can_access_orders === '0' || user.can_access_orders === false || user.can_access_orders === 'false') {
+          return (
+            <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-6 py-4 rounded-2xl text-center max-w-lg mx-auto mt-24">
+              <h2 className="text-2xl font-bold mb-2">Orders Access Disabled</h2>
+              <p className="text-lg">Your access to Orders Management has been disabled by a Super Admin. If you believe this is a mistake, please contact your administrator.</p>
+            </div>
+          );
+        }
         return <OrdersTab />
       case 'admin-chat-support':
+        if (user.can_access_chat_support === 0 || user.can_access_chat_support === '0' || user.can_access_chat_support === false || user.can_access_chat_support === 'false') {
+          return (
+            <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-6 py-4 rounded-2xl text-center max-w-lg mx-auto mt-24">
+              <h2 className="text-2xl font-bold mb-2">Chat Support Access Disabled</h2>
+              <p className="text-lg">Your access to Chat Support Management has been disabled by a Super Admin. If you believe this is a mistake, please contact your administrator.</p>
+            </div>
+          );
+        }
         return <DynamicChatAccess user={user} fullScreen={true} />;
       case 'notifications':
         return <Notifications user={user} />
@@ -825,12 +917,10 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
       } catch (error) {
         console.error('EmployeeDashboard: Error in profile interval fetch:', error);
       }
-    }, 15000); // Increased to 15 seconds to reduce frequency
+    }, 30000); // Increased to 30 seconds to reduce frequency and prevent blinking
     return () => clearInterval(interval);
   }, [setUser, initialInventoryAccess]);
 
-  // Find the latest unread notification for toast
-  const latestUnread = notifications && notifications.length > 0 ? notifications.find(n => !n.read) : null;
 
   if (!user) {
     return (
@@ -857,14 +947,6 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
     return (
       <>
         {renderContent()}
-        {/* Notification Toast */}
-        {latestUnread && showToast && (
-          <NotificationToast
-            notification={latestUnread}
-            onClose={() => setShowToast(false)}
-            onMarkAsRead={() => markAsRead(latestUnread.id)}
-          />
-        )}
       </>
     );
   }
@@ -878,14 +960,6 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
       ) : error ? (
         <div className="text-center text-red-600 py-8">{error}</div>
       ) : renderContent()}
-      {/* Notification Toast */}
-      {latestUnread && showToast && (
-        <NotificationToast
-          notification={latestUnread}
-          onClose={() => setShowToast(false)}
-          onMarkAsRead={() => markAsRead(latestUnread.id)}
-        />
-      )}
     </div>
   )
 }
@@ -893,40 +967,153 @@ const EmployeeDashboard = ({ initialTab, user, setUser }) => {
 export default EmployeeDashboard 
 
 // Minimal CreateOrderForm (re-used from Admin dashboard shape)
-function CreateOrderForm({ user, inventory = [], onCancel = () => {}, onCreated = () => {} }) {
+function CreateOrderForm({ user, inventory = [], categories = [], editingOrder = null, onCancel = () => {}, onCreated = () => {} }) {
   const [items, setItems] = React.useState([])
-  const [status, setStatus] = React.useState('Completed')
+  const [status, setStatus] = React.useState('pending')
   const [creating, setCreating] = React.useState(false)
   const [notes, setNotes] = React.useState('')
+  const [purchaseDate, setPurchaseDate] = React.useState('')
+  const [customerName, setCustomerName] = React.useState('')
+  const [customerPhone, setCustomerPhone] = React.useState('')
 
   const addLine = () => setItems(prev => [...prev, { component_id: '', quantity: 1 }])
   const updateLine = (idx, patch) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it))
   const removeLine = (idx) => setItems(prev => prev.filter((_, i) => i !== idx))
+
 
   React.useEffect(() => {
     if (items.length === 0) addLine()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Populate form when editing an existing order
+  React.useEffect(() => {
+    if (editingOrder) {
+      setStatus(editingOrder.status || 'pending')
+      setNotes(editingOrder.notes || '')
+      setPurchaseDate(editingOrder.purchase_date || '')
+      setCustomerName(editingOrder.customer_name || '')
+      setCustomerPhone(editingOrder.customer_phone || '')
+      
+      // Validate order ID before fetching
+      if (!editingOrder.id) {
+        console.error('Cannot fetch order details: order ID is missing', editingOrder)
+        alert('Error: Order ID is missing. Cannot load order details.')
+        setItems([{ component_id: '', quantity: 1 }])
+        return
+      }
+      
+      // Fetch order details with items
+      const fetchOrderDetails = async () => {
+        try {
+          const url = `${API_BASE}/index.php?endpoint=orders&id=${editingOrder.id}`
+          console.log('Fetching order details from:', url)
+          
+          const res = await authorizedFetch(url)
+          
+          // Check response status before parsing JSON
+          if (!res.ok) {
+            const errorText = await res.text()
+            let errorData
+            try {
+              errorData = JSON.parse(errorText)
+            } catch {
+              errorData = { error: errorText || `HTTP ${res.status}` }
+            }
+            console.error('Failed to fetch order details:', res.status, errorData)
+            alert(`Failed to load order details: ${errorData.error || `HTTP ${res.status}`}`)
+            setItems([{ component_id: '', quantity: 1 }])
+            return
+          }
+          
+          const data = await res.json()
+          
+          if (data.success && data.data) {
+            // Populate items from the order
+            if (data.data.items && Array.isArray(data.data.items) && data.data.items.length > 0) {
+              const orderItems = data.data.items.map(item => ({
+                component_id: item.component_id ? item.component_id.toString() : '',
+                quantity: item.quantity || 1
+              }))
+              setItems(orderItems)
+            } else {
+              // Order exists but has no items
+              console.warn('Order found but has no items')
+              setItems([{ component_id: '', quantity: 1 }])
+            }
+            // Populate optional contact fields if present
+            setCustomerName(data.data.customer_name || '')
+            setCustomerPhone(data.data.customer_phone || '')
+          } else {
+            console.error('API returned unsuccessful response:', data)
+            alert(`Failed to load order: ${data.error || 'Unknown error'}`)
+            setItems([{ component_id: '', quantity: 1 }])
+          }
+        } catch (error) {
+          console.error('Error fetching order details:', error)
+          alert(`Error loading order details: ${error.message || 'Network error'}`)
+          setItems([{ component_id: '', quantity: 1 }])
+        }
+      }
+      
+      fetchOrderDetails()
+    } else {
+      // Reset form when not editing
+      setItems([{ component_id: '', quantity: 1 }])
+      setStatus('pending')
+      setNotes('')
+      setPurchaseDate('')
+    }
+  }, [editingOrder])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!Array.isArray(items) || items.length === 0) return
+    
+    // Check for empty component slots - user must either select a component or remove the slot
+    const emptySlots = items.filter(it => !it.component_id || it.component_id === '')
+    if (emptySlots.length > 0) {
+      alert('Please select a component for all items or remove empty slots using the "Remove" button.')
+      return
+    }
+    
+    // Validate purchase date
+    if (!purchaseDate) {
+      alert('Please select a purchase date.')
+      return
+    }
+    if (customerPhone && !/^63\d{10}$/.test(String(customerPhone).replace(/[^\d]/g, ''))) {
+      alert('Customer phone must start with 63 followed by 10 digits.')
+      return
+    }
+    
     const normalized = items
       .filter(it => it.component_id && Number(it.quantity) > 0)
       .map(it => ({ component_id: Number(it.component_id), quantity: Number(it.quantity) }))
     if (normalized.length === 0) return
     setCreating(true)
     try {
-      const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=orders`, {
-        method: 'POST',
+      const isEdit = !!editingOrder
+      const endpoint = isEdit ? `${API_BASE}/index.php?endpoint=orders&id=${editingOrder.id}` : `${API_BASE}/index.php?endpoint=orders`
+      const method = isEdit ? 'PUT' : 'POST'
+      
+      const res = await authorizedFetch(endpoint, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: normalized, status, notes: notes ? String(notes).toUpperCase() : undefined })
+        body: JSON.stringify({ 
+          items: normalized, 
+          status, 
+          notes: notes ? String(notes).toUpperCase() : undefined,
+          purchase_date: purchaseDate,
+          customer_name: customerName || undefined,
+          customer_phone: customerPhone || undefined
+        })
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.success) {
-        alert(data.error || 'Failed to create order')
+        alert(data.error || `Failed to ${isEdit ? 'update' : 'create'} order`)
       } else {
-        onCreated(data.order_id)
+        onCreated(data.order_id || editingOrder?.id)
       }
     } catch (err) {
       console.error(err)
@@ -937,50 +1124,133 @@ function CreateOrderForm({ user, inventory = [], onCancel = () => {}, onCreated 
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-2">
-        {items.map((it, idx) => (
-          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-            <select
-              className="col-span-7 border rounded px-3 py-2"
-              value={it.component_id}
-              onChange={e => updateLine(idx, { component_id: e.target.value })}
-            >
-              <option value="">Select Component</option>
-              {inventory.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+    <form onSubmit={handleSubmit} className="space-y-8">
+      {/* Component Selection Section */}
+      <div className="bg-gray-50 rounded-2xl p-6">
+        <h4 className="text-lg font-semibold text-gray-800 mb-6">Component Selection</h4>
+        <div className="space-y-6">
+          {items.map((it, idx) => (
+            <div key={idx} className={`bg-white rounded-xl p-6 shadow-sm border-2 ${!it.component_id || it.component_id === '' ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+              <div className="grid grid-cols-12 gap-4 items-end">
+                <div className="col-span-7">
+                  <label className="block text-sm font-semibold text-gray-700 mb-3">Component</label>
+                  <ComponentSearchInput
+                    value={it.component_id}
+                    onChange={(componentId) => updateLine(idx, { component_id: componentId })}
+                    inventory={inventory}
+                    categories={categories}
+                    placeholder="Search components..."
+                    className={`w-full ${!it.component_id || it.component_id === '' ? 'border-red-300' : ''}`}
+                  />
+                  {(!it.component_id || it.component_id === '') && (
+                    <p className="text-red-600 text-sm mt-2 font-medium">Please select a component or remove this item</p>
+                  )}
+                </div>
+                <div className="col-span-3">
+                  <label className="block text-sm font-semibold text-gray-700 mb-3">Quantity</label>
+                  <input
+                    type="number"
+                    min={1}
+                    className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+                    value={it.quantity}
+                    onChange={e => updateLine(idx, { quantity: e.target.value })}
+                  />
+                </div>
+                <div className="col-span-2 flex justify-end">
+                  <button 
+                    type="button" 
+                    className="text-red-600 hover:text-red-800 font-semibold text-sm py-3 px-4 border-2 border-red-300 rounded-lg hover:bg-red-50 transition-colors whitespace-nowrap" 
+                    onClick={() => removeLine(idx)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button 
+            type="button" 
+            className="w-full text-indigo-600 hover:text-indigo-800 font-semibold flex items-center justify-center gap-3 py-4 px-6 border-2 border-dashed border-indigo-300 rounded-xl hover:bg-indigo-50 transition-colors" 
+            onClick={addLine}
+          >
+            <Plus className="h-5 w-5" />
+            Add Another Component
+          </button>
+        </div>
+      </div>
+
+      {/* Order Details Section */}
+      <div className="bg-gray-50 rounded-2xl p-6">
+        <h4 className="text-lg font-semibold text-gray-800 mb-6">Order Details</h4>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">Status</label>
+            <select className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" value={status} onChange={e => setStatus(e.target.value)}>
+              <option value="Pending">Pending</option>
+              <option value="Processing">Processing</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
             </select>
-            <input
-              type="number"
-              min={1}
-              className="col-span-3 border rounded px-3 py-2"
-              value={it.quantity}
-              onChange={e => updateLine(idx, { quantity: e.target.value })}
-            />
-            <button type="button" className="col-span-2 text-red-600" onClick={() => removeLine(idx)}>Remove</button>
           </div>
-        ))}
-        <button type="button" className="text-blue-600" onClick={addLine}>+ Add Item</button>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Status</label>
-          <select className="mt-1 border rounded px-3 py-2 w-full" value={status} onChange={e => setStatus(e.target.value)}>
-            <option value="Pending">Pending</option>
-            <option value="Processing">Processing</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">Purchase Date *</label>
+            <input 
+              type="date" 
+              className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" 
+              value={purchaseDate} 
+              onChange={e => setPurchaseDate(e.target.value)} 
+              required 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">Notes (COMMENTS)</label>
+            <input 
+              className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" 
+              value={notes} 
+              onChange={e => setNotes(e.target.value)} 
+              placeholder="OPTIONAL" 
+            />
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Notes (COMMENTS)</label>
-          <input className="mt-1 border rounded px-3 py-2 w-full" value={notes} onChange={e => setNotes(e.target.value)} placeholder="OPTIONAL" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">Customer Full Name</label>
+            <input 
+              className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" 
+              value={customerName} 
+              onChange={e => setCustomerName(e.target.value)} 
+              placeholder="Juan Dela Cruz" 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">Customer Contact Number</label>
+            <input 
+              className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" 
+              value={customerPhone} 
+              onChange={e => setCustomerPhone(e.target.value)} 
+              placeholder="639XXXXXXXXX" 
+            />
+            <p className="text-xs text-gray-500 mt-1">PH format: 63 + 10 digits</p>
+          </div>
         </div>
       </div>
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded">Cancel</button>
-        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded" disabled={creating}>{creating ? 'Creating...' : 'Create Order'}</button>
+
+      {/* Action Buttons */}
+      <div className="flex justify-end gap-4 pt-6 border-t-2 border-gray-200">
+        <button 
+          type="button" 
+          onClick={onCancel} 
+          className="px-8 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-colors font-semibold text-gray-700"
+        >
+          Cancel
+        </button>
+        <button 
+          type="submit" 
+          className="px-8 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-lg" 
+          disabled={creating}
+        >
+          {creating ? (editingOrder ? 'Updating...' : 'Creating...') : (editingOrder ? 'Update Order' : 'Create Order')}
+        </button>
       </div>
     </form>
   )
@@ -1001,19 +1271,96 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
   const [loadingBranch, setLoadingBranch] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const [imageMeta, setImageMeta] = React.useState(null);
+  const [uploadError, setUploadError] = React.useState(null);
 
-  const handleChange = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const handleChange = (k, v) => {
+    // Clear upload error when manually changing image URL
+    if (k === 'image_url') {
+      setUploadError(null);
+    }
+    setForm(prev => ({ ...prev, [k]: v }));
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setUploadError('Invalid file type. Please select a JPEG, PNG, GIF, or WebP image.');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > maxSize) {
+      setUploadError('File too large. Maximum size is 5MB.');
+      return;
+    }
+
+    setUploadError(null);
+
+    // Convert file to base64 data URL
+    try {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target.result;
+        handleChange('image_url', dataUrl);
+        
+        // Load image to get dimensions
+        const img = new Image();
+        img.onload = () => {
+          setImageMeta({ 
+            sizeBytes: file.size, 
+            width: img.naturalWidth, 
+            height: img.naturalHeight 
+          });
+        };
+        img.onerror = () => {
+          setImageMeta({ sizeBytes: file.size, width: null, height: null });
+        };
+        img.src = dataUrl;
+      };
+      reader.onerror = () => {
+        setUploadError('Error reading file. Please try again.');
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('File conversion error:', err);
+      setUploadError('Error processing file. Please try again.');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
+      // Convert blob URL to base64 if it's still a blob URL (fallback for old code)
+      let imageUrl = form.image_url;
+      if (imageUrl && imageUrl.startsWith('blob:')) {
+        // Try to convert blob URL to base64
+        try {
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          imageUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (err) {
+          console.warn('Could not convert blob URL, clearing image');
+          imageUrl = null;
+        }
+      }
+
       const endpoint = form.id ? 'update_component' : 'create_component';
-      // NOTE: backend endpoints are assumed (create_component/update_component). If they differ, adapt accordingly.
+      const submitData = { ...form, image_url: imageUrl };
       const res = await authorizedFetch(`${API_BASE}/index.php?endpoint=${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify(submitData)
       });
       const result = await res.json();
       if (!result.success) {
@@ -1067,36 +1414,29 @@ function EditForm({ item = {}, categories = [], onCancel = () => {}, onSave = ()
           <input
             type="text"
             placeholder="Image URL (optional)"
-            value={form.image_url}
+            value={form.image_url && !form.image_url.startsWith('data:') ? form.image_url : ''}
             onChange={e => handleChange('image_url', e.target.value)}
             className="mt-1 block w-full border rounded px-3 py-2"
           />
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
-            onChange={async (e) => {
-              const file = e.target.files && e.target.files[0];
-              if (!file) return;
-              const url = URL.createObjectURL(file);
-              handleChange('image_url', url);
-              try {
-                const img = new Image();
-                img.onload = () => {
-                  setImageMeta({ sizeBytes: file.size, width: img.naturalWidth, height: img.naturalHeight });
-                };
-                img.src = url;
-              } catch {}
-            }}
+            accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+            onChange={handleFileChange}
             className="mt-1"
           />
         </div>
+        {uploadError && (
+          <div className="mt-2 text-xs text-red-600">{uploadError}</div>
+        )}
         <div className="mt-2">
           {form.image_url ? (
             <div className="flex items-center gap-3">
               <img src={form.image_url} alt="Preview" className="w-20 h-20 object-contain border rounded" onError={e => { e.currentTarget.style.display = 'none'; }} />
               {imageMeta && (
-                <span className="text-xs text-gray-600">{imageMeta.width}×{imageMeta.height} px, {(imageMeta.sizeBytes / 1024).toFixed(1)} KB</span>
+                <span className="text-xs text-gray-600">
+                  {imageMeta.width && imageMeta.height ? `${imageMeta.width}×${imageMeta.height} px, ` : ''}{(imageMeta.sizeBytes / 1024).toFixed(1)} KB
+                </span>
               )}
             </div>
           ) : (

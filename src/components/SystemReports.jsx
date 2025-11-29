@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { formatCurrencyPHP } from '../utils/currency';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, PieChart as PieIcon, Package, Award, Layers, AlertTriangle, BarChart3, Eye, EyeOff } from 'lucide-react';
+import { TrendingUp, PieChart as PieIcon, Package, Award, Layers, AlertTriangle, BarChart3, Eye, EyeOff, Download, Maximize2, X } from 'lucide-react';
+import { downloadSalesReport } from '../utils/exportUtils';
 
-const COLORS = ['#6366F1', '#22D3EE', '#F59E42', '#F472B6', '#A3E635', '#F87171', '#60A5FA', '#FBBF24', '#34D399', '#818CF8'];
+// Improved color palette with better distinction between colors
+const COLORS = ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899', '#F97316', '#84CC16', '#14B8A6'];
 
 const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCategoryNames = {}, deadstockPeriod = 90, onDeadstockPeriodChange, isLoading }) => {
   if (isLoading) { // Use a dedicated isLoading prop instead
@@ -31,21 +33,26 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
   const [showDeadstock, setShowDeadstock] = useState(true);
   const [deadstockSearchTerm, setDeadstockSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [expandedChart, setExpandedChart] = useState(null); // Track which chart is expanded
   const itemsPerPage = 10;
   const allowedCategoryNames = [
     'CPU', 'Motherboard', 'GPU', 'RAM', 'Storage', 'PSU', 'Case', 'Cooler',
     'Procie Only', 'Mobo', 'Ram 3200mhz', 'Ssd Nvme', 'Psu - Tr', 'Case Gaming', 'Aio'
   ];
   const componentCategories = (categories || []).filter(cat => allowedCategoryNames.includes(cat.name));
-  const deadstockComponentIds = inventory.filter(item => {
-    const cat = (categories || []).find(c => String(c.id) === String(item.category_id));
-    return cat && allowedCategoryNames.includes(cat.name);
-  }).map(item => item.id);
-  const filteredDeadstockRaw = deadstock.filter(item => deadstockComponentIds.includes(item.id));
+  // Use deadstock data directly without filtering by inventory
+  const filteredDeadstockRaw = deadstock || [];
+  // Get category IDs from deadstock items directly
   const deadstockCategoryIds = Array.from(new Set(
     filteredDeadstockRaw.map(item => {
-      const catId = inventory.find(comp => comp.id === item.id)?.category_id;
-      return catId ? String(catId) : null;
+      // Try to find category from inventory first, then from categories
+      const inventoryItem = inventory.find(comp => comp.id === item.id);
+      if (inventoryItem?.category_id) {
+        return String(inventoryItem.category_id);
+      }
+      // If not in inventory, we'll need to get category from the deadstock item itself
+      // For now, return null and we'll handle this in the display
+      return null;
     }).filter(Boolean)
   ));
   const dropdownCategories = componentCategories.filter(cat => deadstockCategoryIds.includes(String(cat.id)));
@@ -73,24 +80,14 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
     salesChartTitle = 'Monthly Sales';
     salesChartComponent = (
       <ResponsiveContainer width="100%" height={250}>
-        {monthly_sales && monthly_sales.length > 0 ? (
-          <LineChart data={monthly_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" label={{ value: 'Month', position: 'insideBottomRight', offset: 0 }} />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            <Line type="monotone" dataKey="total_sales" stroke="#6366F1" strokeWidth={3} />
-          </LineChart>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
-            <p className="text-gray-400 mt-2">
-              This could be because there are no completed orders yet or the system is still collecting data.
-            </p>
-          </div>
-        )}
+        <LineChart data={monthly_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="month" label={{ value: 'Month', position: 'insideBottomRight', offset: 0 }} />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Line type="monotone" dataKey="total_sales" stroke="#6366F1" strokeWidth={3} />
+        </LineChart>
       </ResponsiveContainer>
     );
   } else if (salesChartType === 'weekly') {
@@ -98,24 +95,14 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
     salesChartTitle = 'Weekly Sales';
     salesChartComponent = (
       <ResponsiveContainer width="100%" height={250}>
-        {weekly_sales && weekly_sales.length > 0 ? (
-          <LineChart data={weekly_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="week" label={{ value: 'Week', position: 'insideBottomRight', offset: 0 }} />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            <Line type="monotone" dataKey="total_sales" stroke="#22D3EE" strokeWidth={3} />
-          </LineChart>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
-            <p className="text-gray-400 mt-2">
-              This could be because there are no completed orders yet or the system is still collecting data.
-            </p>
-          </div>
-        )}
+        <LineChart data={weekly_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="week" label={{ value: 'Week', position: 'insideBottomRight', offset: 0 }} />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Line type="monotone" dataKey="total_sales" stroke="#22D3EE" strokeWidth={3} />
+        </LineChart>
       </ResponsiveContainer>
     );
   } else if (salesChartType === 'daily') {
@@ -123,36 +110,40 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
     salesChartTitle = 'Daily Sales (Last 30 Days)';
     salesChartComponent = (
       <ResponsiveContainer width="100%" height={250}>
-        {daily_sales && daily_sales.length > 0 ? (
-          <BarChart data={daily_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="day" label={{ value: 'Day', position: 'insideBottomRight', offset: 0 }} />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="total_sales" fill="#F59E42" />
-          </BarChart>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
-            <p className="text-gray-400 mt-2">
-              This could be because there are no completed orders yet or the system is still collecting data.
-            </p>
-          </div>
-        )}
+        <BarChart data={daily_sales} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="day" label={{ value: 'Day', position: 'insideBottomRight', offset: 0 }} />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Bar dataKey="total_sales" fill="#F59E42" />
+        </BarChart>
       </ResponsiveContainer>
     );
   }
 
+  const handleDownloadReport = () => {
+    downloadSalesReport(reports);
+  };
+
   return (
     <div className="page-container space-y-8">
-      <h2 className="page-title">Sales Reports & Analytics</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="page-title">Sales Reports & Analytics</h2>
+        <button
+          onClick={handleDownloadReport}
+          className="btn btn-primary flex items-center gap-2"
+          title="Download Sales Report as Excel"
+        >
+          <Download className="h-4 w-4" />
+          Download Report
+        </button>
+      </div>
       {/* Friendly KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="card">
           <div className="text-sm text-gray-500">Average Order Value</div>
-          <div className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(average_order_value?.value || 0)}</div>
+          <div className="text-2xl font-bold text-gray-900">{formatCurrencyPHP(average_order_value?.avg_order_value || 0)}</div>
         </div>
         <div className="card">
           <div className="text-sm text-gray-500">Top Category</div>
@@ -160,13 +151,13 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
         </div>
         <div className="card">
           <div className="text-sm text-gray-500">Top Product</div>
-          <div className="text-2xl font-bold text-gray-900">{(top_selling_products?.[0]?.product_name) || '—'}</div>
+          <div className="text-2xl font-bold text-gray-900">{(top_selling_products?.[0]?.name) || '—'}</div>
         </div>
       </div>
       <div className="space-y-6">
 
         {/* Sales Chart Card */}
-        <div className="card chart-card">
+        <div className="card chart-card relative">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Sales Overview</h3>
             <div className="flex items-center gap-2">
@@ -181,10 +172,29 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
                 <option value="weekly">Weekly</option>
                 <option value="daily">Daily</option>
               </select>
+              {salesChartData && salesChartData.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('sales-overview')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors ml-2"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
+              )}
             </div>
           </div>
           <div className="h-[320px]">
-            {salesChartComponent}
+            {salesChartData && salesChartData.length > 0 ? (
+              salesChartComponent
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full p-6">
+                <Package className="w-12 h-12 text-gray-300 mb-4" />
+                <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                <p className="text-gray-400 text-sm max-w-md text-center">
+                  This could be because there are no completed orders yet or the system is still collecting data.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -358,7 +368,15 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
                   )}
                 </div>
               ) : (
-                <div className="text-center py-4 w-full">No deadstock data available.</div>
+                <div className="text-center py-8 w-full">
+                  <Package className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No deadstock data available</h3>
+                  <div className="text-center w-full">
+                    <p className="text-gray-400 text-sm max-w-md mx-auto text-center leading-relaxed" style={{textAlign: 'center', marginLeft: 'auto', marginRight: 'auto'}}>
+                      This could be because there are no components with no sales in the specified period, or the system is still collecting data.
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -367,122 +385,346 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
         {/* Analytics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Top-Selling Products */}
-          <div className="card chart-card">
+          <div className="card chart-card relative">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-lg font-semibold text-gray-900">Top-Selling Products</h3>
-            <span className="text-xs text-gray-500">Qty vs Revenue</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Qty vs Revenue</span>
+              {top_selling_products && top_selling_products.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('top-selling')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
+              )}
+            </div>
           </div>
           <div className="h-[320px]">
               {top_selling_products && top_selling_products.length > 0 ? (
-                <BarChart data={top_selling_products} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" />
-                  <YAxis dataKey="name" type="category" width={120} />
-                  <Tooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="total_quantity" fill="#6366F1" name="Quantity Sold" />
-                  <Bar dataKey="total_revenue" fill="#F59E42" name="Revenue" />
-                </BarChart>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={top_selling_products} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" />
+                    <YAxis 
+                      dataKey="name" 
+                      type="category" 
+                      width={140}
+                      tick={{ fontSize: 9 }}
+                      angle={0}
+                      textAnchor="end"
+                      interval={0}
+                    />
+                    <Tooltip 
+                      contentStyle={{ fontSize: '12px' }}
+                      formatter={(value, name) => {
+                        if (name === 'Quantity Sold') return [value, 'Quantity'];
+                        if (name === 'Revenue') return [formatCurrencyPHP(value), 'Revenue'];
+                        return [value, name];
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="total_quantity" fill="#6366F1" name="Quantity Sold" />
+                    <Bar dataKey="total_revenue" fill="#F59E42" name="Revenue" />
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
-                <div className="flex items-center justify-center h-full text-gray-400">No data available</div>
+                <div className="flex flex-col items-center justify-center h-full p-6">
+                  <Package className="w-12 h-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                  <p className="text-gray-400 text-sm max-w-md text-center">
+                    This could be because there are no completed orders yet or the system is still collecting data.
+                  </p>
+                </div>
               )}
             </div>
           </div>
           
           {/* Revenue by Category */}
-          <div className="card chart-card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Revenue by Category</h3>
-            <div className="h-[300px] flex items-center justify-center">
-              {revenue_per_category && revenue_per_category.length > 0 ? (
-                <PieChart width={350} height={250}>
-                  <Pie 
-                    data={revenue_per_category} 
-                    dataKey="total_revenue" 
-                    nameKey="category" 
-                    cx="50%" 
-                    cy="50%" 
-                    outerRadius={80} 
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {revenue_per_category.map((entry, idx) => (
-                      <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => [formatCurrencyPHP(value), 'Revenue']} />
-                  <Legend />
-                </PieChart>
-              ) : (
-                <div className="text-gray-400">No data available</div>
+          <div className="card chart-card relative">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Revenue by Category</h3>
+              {revenue_per_category && revenue_per_category.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('revenue-category')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
+              )}
+            </div>
+            <div className="h-[300px]">
+              {revenue_per_category && revenue_per_category.length > 0 ? (() => {
+                // Sort data by revenue descending and calculate total
+                const sortedData = [...revenue_per_category]
+                  .map(item => ({
+                    ...item,
+                    total_revenue: Number(item.total_revenue) || 0
+                  }))
+                  .sort((a, b) => b.total_revenue - a.total_revenue);
+                const totalRevenue = sortedData.reduce((sum, item) => sum + item.total_revenue, 0);
+                
+                return (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie 
+                        data={sortedData}
+                        dataKey="total_revenue" 
+                        nameKey="category" 
+                        cx="50%" 
+                        cy="45%" 
+                        innerRadius={40}
+                        outerRadius={90} 
+                        label={false}
+                      >
+                        {sortedData.map((entry, idx) => (
+                          <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        formatter={(value, name, props) => [
+                          formatCurrencyPHP(value), 
+                          `${props.payload.category}: ${((value / totalRevenue) * 100).toFixed(1)}%`
+                        ]} 
+                      />
+                      <Legend 
+                        verticalAlign="bottom"
+                        height={36}
+                        formatter={(value, entry, index) => {
+                          const item = sortedData[index];
+                          const percent = totalRevenue > 0 ? ((item.total_revenue / totalRevenue) * 100).toFixed(1) : '0';
+                          return `${value} (${percent}%)`;
+                        }}
+                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                );
+              })() : (
+                <div className="flex flex-col items-center justify-center h-full p-6">
+                  <Package className="w-12 h-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                  <p className="text-gray-400 text-sm max-w-md text-center">
+                    This could be because there are no completed orders yet or the system is still collecting data.
+                  </p>
+                </div>
               )}
             </div>
           </div>
           {/* Revenue by Brand */}
-          <div className="card chart-card">
-            <div className="flex items-center gap-2 mb-4"><Package className="h-5 w-5 text-blue-500" /><h3 className="text-lg font-bold text-gray-900">Revenue by Brand</h3></div>
-            <ResponsiveContainer width="100%" height={250}>
-              {revenue_per_brand && revenue_per_brand.length > 0 ? (
-                <PieChart>
-                  <Pie data={revenue_per_brand} dataKey="total_revenue" nameKey="brand" cx="50%" cy="50%" outerRadius={80} label>
-                    {revenue_per_brand.map((entry, idx) => (
-                      <Cell key={`brand-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
-            <p className="text-gray-400 mt-2">
-              This could be because there are no completed orders yet or the system is still collecting data.
-            </p>
-          </div>
+          <div className="card chart-card relative">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2"><Package className="h-5 w-5 text-blue-500" /><h3 className="text-lg font-bold text-gray-900">Revenue by Brand</h3></div>
+              {revenue_per_brand && revenue_per_brand.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('revenue-brand')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
               )}
-            </ResponsiveContainer>
+            </div>
+            <div className="h-[250px]">
+              {revenue_per_brand && revenue_per_brand.length > 0 ? (() => {
+                // Normalize brand names (handle duplicates like "DEEP COOL" vs "DEEPCOOL")
+                const normalizeBrand = (brand) => {
+                  if (!brand) return '';
+                  return brand.trim().toUpperCase().replace(/\s+/g, ' ');
+                };
+                
+                // Group and merge similar brand names
+                const brandMap = new Map();
+                revenue_per_brand.forEach(item => {
+                  const normalized = normalizeBrand(item.brand);
+                  const existing = brandMap.get(normalized);
+                  if (existing) {
+                    existing.total_revenue = (Number(existing.total_revenue) || 0) + (Number(item.total_revenue) || 0);
+                  } else {
+                    brandMap.set(normalized, {
+                      ...item,
+                      brand: item.brand, // Keep original brand name for display
+                      total_revenue: Number(item.total_revenue) || 0
+                    });
+                  }
+                });
+                
+                // Sort data by revenue descending and calculate total
+                const sortedData = Array.from(brandMap.values())
+                  .sort((a, b) => b.total_revenue - a.total_revenue);
+                const totalRevenue = sortedData.reduce((sum, item) => sum + item.total_revenue, 0);
+                
+                return (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie 
+                        data={sortedData}
+                        dataKey="total_revenue" 
+                        nameKey="brand" 
+                        cx="50%" 
+                        cy="45%" 
+                        innerRadius={35}
+                        outerRadius={80} 
+                        label={false}
+                      >
+                        {sortedData.map((entry, idx) => (
+                          <Cell key={`brand-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        formatter={(value, name, props) => [
+                          formatCurrencyPHP(value), 
+                          `${props.payload.brand}: ${((value / totalRevenue) * 100).toFixed(1)}%`
+                        ]} 
+                      />
+                      <Legend 
+                        verticalAlign="bottom"
+                        height={36}
+                        formatter={(value, entry, index) => {
+                          const item = sortedData[index];
+                          const percent = totalRevenue > 0 ? ((item.total_revenue / totalRevenue) * 100).toFixed(1) : '0';
+                          return `${value} (${percent}%)`;
+                        }}
+                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                );
+              })() : (
+                <div className="flex flex-col items-center justify-center h-full p-6">
+                  <Package className="w-12 h-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                  <p className="text-gray-400 text-sm max-w-md text-center">
+                    This could be because there are no completed orders yet or the system is still collecting data.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
           {/* Order Status Breakdown */}
-          <div className="card chart-card">
-            <div className="flex items-center gap-2 mb-4"><PieIcon className="h-5 w-5 text-green-500" /><h3 className="text-lg font-bold text-gray-900">Order Status Breakdown</h3></div>
-            <ResponsiveContainer width="100%" height={250}>
-              {order_status_breakdown && order_status_breakdown.length > 0 ? (
-                <PieChart>
-                  <Pie data={order_status_breakdown} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={80} label>
-                    {order_status_breakdown.map((entry, idx) => (
-                      <Cell key={`status-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <Package className="w-12 h-12 text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-500">No sales data available</h3>
-            <p className="text-gray-400 mt-2">
-              This could be because there are no completed orders yet or the system is still collecting data.
-            </p>
-          </div>
+          <div className="card chart-card relative">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2"><PieIcon className="h-5 w-5 text-green-500" /><h3 className="text-lg font-bold text-gray-900">Order Status Breakdown</h3></div>
+              {order_status_breakdown && order_status_breakdown.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('order-status')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
               )}
-            </ResponsiveContainer>
+            </div>
+            <div className="h-[250px]">
+              {order_status_breakdown && order_status_breakdown.length > 0 ? (() => {
+                // Sort data by count descending and calculate total
+                const sortedData = [...order_status_breakdown]
+                  .map(item => ({
+                    ...item,
+                    count: Number(item.count) || 0
+                  }))
+                  .sort((a, b) => b.count - a.count);
+                const totalCount = sortedData.reduce((sum, item) => sum + item.count, 0);
+                
+                return (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie 
+                        data={sortedData}
+                        dataKey="count" 
+                        nameKey="status" 
+                        cx="50%" 
+                        cy="45%" 
+                        innerRadius={35}
+                        outerRadius={80} 
+                        label={false}
+                      >
+                        {sortedData.map((entry, idx) => (
+                          <Cell key={`status-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        formatter={(value, name, props) => [
+                          `${value} orders`, 
+                          `${props.payload.status}: ${((value / totalCount) * 100).toFixed(1)}%`
+                        ]} 
+                      />
+                      <Legend 
+                        verticalAlign="bottom"
+                        height={36}
+                        formatter={(value, entry, index) => {
+                          const item = sortedData[index];
+                          const percent = totalCount > 0 ? ((item.count / totalCount) * 100).toFixed(1) : '0';
+                          return `${value} (${item.count}, ${percent}%)`;
+                        }}
+                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                );
+              })() : (
+                <div className="flex flex-col items-center justify-center h-full p-6">
+                  <Package className="w-12 h-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                  <p className="text-gray-400 text-sm max-w-md text-center">
+                    This could be because there are no completed orders yet or the system is still collecting data.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Stock Movement & Deadstock */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
           {/* Stock Movement */}
-          <div className="card chart-card">
-            <div className="flex items-center gap-2 mb-4"><TrendingUp className="h-5 w-5 text-teal-500" /><h3 className="text-lg font-bold text-gray-900">Stock Movement (Last 30 Days)</h3></div>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stock_movement} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="name" type="category" width={120} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="sold_last_30_days" fill="#22D3EE" name="Sold (30d)" />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="card chart-card relative">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2"><TrendingUp className="h-5 w-5 text-teal-500" /><h3 className="text-lg font-bold text-gray-900">Stock Movement (Last 30 Days)</h3></div>
+              {stock_movement && stock_movement.length > 0 && (
+                <button
+                  onClick={() => setExpandedChart('stock-movement')}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Expand chart"
+                >
+                  <Maximize2 className="h-4 w-4 text-gray-600" />
+                </button>
+              )}
+            </div>
+            <div className="h-[250px]">
+              {stock_movement && stock_movement.length > 0 ? (
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={stock_movement} layout="vertical" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" />
+                    <YAxis 
+                      dataKey="name" 
+                      type="category" 
+                      width={140}
+                      tick={{ fontSize: 9 }}
+                      angle={0}
+                      textAnchor="end"
+                      interval={0}
+                    />
+                    <Tooltip 
+                      contentStyle={{ fontSize: '12px' }}
+                    />
+                    <Legend />
+                    <Bar dataKey="sold_last_30_days" fill="#22D3EE" name="Sold (30d)" />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full p-6">
+                  <Package className="w-12 h-12 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2 text-center">No data available</h3>
+                  <p className="text-gray-400 text-sm max-w-md text-center">
+                    This could be because there are no completed orders in the last 30 days or the system is still collecting data.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
           {/* Deadstock */}
           {/* This section is now redundant as the Deadstock card is moved */}
@@ -494,6 +736,309 @@ const SystemReports = ({ reports = {}, inventory = [], categories = [], formalCa
           <div className="text-4xl font-extrabold text-green-700">{formatCurrencyPHP(average_order_value?.avg_order_value || 0)}</div>
         </div>
       </div>
+
+      {/* Expanded Chart Modal */}
+      {expandedChart && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={() => setExpandedChart(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto relative" onClick={e => e.stopPropagation()}>
+            {/* Close Button */}
+            <button
+              onClick={() => setExpandedChart(null)}
+              className="absolute top-4 right-4 bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 rounded-full p-2 transition-colors shadow z-10"
+              title="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            {/* Expanded Chart Content */}
+            <div className="p-8">
+              {expandedChart === 'top-selling' && top_selling_products && top_selling_products.length > 0 && (
+                <>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">Top-Selling Products</h3>
+                  <p className="text-sm text-gray-500 mb-6">Qty vs Revenue</p>
+                  <div className="h-[600px]">
+                    <ResponsiveContainer width="100%" height={600}>
+                      <BarChart data={top_selling_products} layout="vertical" margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" />
+                        <YAxis 
+                          dataKey="name" 
+                          type="category" 
+                          width={180}
+                          tick={{ fontSize: 11 }}
+                          angle={0}
+                          textAnchor="end"
+                          interval={0}
+                        />
+                        <Tooltip 
+                          contentStyle={{ fontSize: '14px' }}
+                          formatter={(value, name) => {
+                            if (name === 'Quantity Sold') return [value, 'Quantity'];
+                            if (name === 'Revenue') return [formatCurrencyPHP(value), 'Revenue'];
+                            return [value, name];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 14 }} />
+                        <Bar dataKey="total_quantity" fill="#6366F1" name="Quantity Sold" />
+                        <Bar dataKey="total_revenue" fill="#F59E42" name="Revenue" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              )}
+
+              {expandedChart === 'revenue-category' && revenue_per_category && revenue_per_category.length > 0 && (() => {
+                // Sort data by revenue descending and calculate total
+                const sortedData = [...revenue_per_category]
+                  .map(item => ({
+                    ...item,
+                    total_revenue: Number(item.total_revenue) || 0
+                  }))
+                  .sort((a, b) => b.total_revenue - a.total_revenue);
+                const totalRevenue = sortedData.reduce((sum, item) => sum + item.total_revenue, 0);
+                
+                return (
+                  <>
+                    <h3 className="text-2xl font-bold text-gray-900 mb-6">Revenue by Category</h3>
+                    <div className="h-[600px]">
+                      <ResponsiveContainer width="100%" height={600}>
+                        <PieChart>
+                          <Pie 
+                            data={sortedData}
+                            dataKey="total_revenue" 
+                            nameKey="category" 
+                            cx="50%" 
+                            cy="45%" 
+                            innerRadius={80}
+                            outerRadius={180} 
+                            label={false}
+                          >
+                            {sortedData.map((entry, idx) => (
+                              <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value, name, props) => [
+                              formatCurrencyPHP(value), 
+                              `${props.payload.category}: ${((value / totalRevenue) * 100).toFixed(1)}%`
+                            ]} 
+                          />
+                          <Legend 
+                            verticalAlign="bottom"
+                            height={50}
+                            formatter={(value, entry, index) => {
+                              const item = sortedData[index];
+                              const percent = totalRevenue > 0 ? ((item.total_revenue / totalRevenue) * 100).toFixed(1) : '0';
+                              return `${value} (${percent}%)`;
+                            }}
+                            wrapperStyle={{ fontSize: '14px', paddingTop: '20px' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
+                );
+              })()}
+
+              {expandedChart === 'revenue-brand' && revenue_per_brand && revenue_per_brand.length > 0 && (() => {
+                // Normalize brand names (handle duplicates like "DEEP COOL" vs "DEEPCOOL")
+                const normalizeBrand = (brand) => {
+                  if (!brand) return '';
+                  return brand.trim().toUpperCase().replace(/\s+/g, ' ');
+                };
+                
+                // Group and merge similar brand names
+                const brandMap = new Map();
+                revenue_per_brand.forEach(item => {
+                  const normalized = normalizeBrand(item.brand);
+                  const existing = brandMap.get(normalized);
+                  if (existing) {
+                    existing.total_revenue = (Number(existing.total_revenue) || 0) + (Number(item.total_revenue) || 0);
+                  } else {
+                    brandMap.set(normalized, {
+                      ...item,
+                      brand: item.brand, // Keep original brand name for display
+                      total_revenue: Number(item.total_revenue) || 0
+                    });
+                  }
+                });
+                
+                // Sort data by revenue descending and calculate total
+                const sortedData = Array.from(brandMap.values())
+                  .sort((a, b) => b.total_revenue - a.total_revenue);
+                const totalRevenue = sortedData.reduce((sum, item) => sum + item.total_revenue, 0);
+                
+                return (
+                  <>
+                    <h3 className="text-2xl font-bold text-gray-900 mb-6">Revenue by Brand</h3>
+                    <div className="h-[600px]">
+                      <ResponsiveContainer width="100%" height={600}>
+                        <PieChart>
+                          <Pie 
+                            data={sortedData}
+                            dataKey="total_revenue" 
+                            nameKey="brand" 
+                            cx="50%" 
+                            cy="45%" 
+                            innerRadius={80}
+                            outerRadius={180} 
+                            label={false}
+                          >
+                            {sortedData.map((entry, idx) => (
+                              <Cell key={`brand-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value, name, props) => [
+                              formatCurrencyPHP(value), 
+                              `${props.payload.brand}: ${((value / totalRevenue) * 100).toFixed(1)}%`
+                            ]} 
+                          />
+                          <Legend 
+                            verticalAlign="bottom"
+                            height={50}
+                            formatter={(value, entry, index) => {
+                              const item = sortedData[index];
+                              const percent = totalRevenue > 0 ? ((item.total_revenue / totalRevenue) * 100).toFixed(1) : '0';
+                              return `${value} (${percent}%)`;
+                            }}
+                            wrapperStyle={{ fontSize: '14px', paddingTop: '20px' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
+                );
+              })()}
+
+              {expandedChart === 'order-status' && order_status_breakdown && order_status_breakdown.length > 0 && (() => {
+                // Sort data by count descending and calculate total
+                const sortedData = [...order_status_breakdown]
+                  .map(item => ({
+                    ...item,
+                    count: Number(item.count) || 0
+                  }))
+                  .sort((a, b) => b.count - a.count);
+                const totalCount = sortedData.reduce((sum, item) => sum + item.count, 0);
+                
+                return (
+                  <>
+                    <h3 className="text-2xl font-bold text-gray-900 mb-6">Order Status Breakdown</h3>
+                    <div className="h-[600px]">
+                      <ResponsiveContainer width="100%" height={600}>
+                        <PieChart>
+                          <Pie 
+                            data={sortedData}
+                            dataKey="count" 
+                            nameKey="status" 
+                            cx="50%" 
+                            cy="45%" 
+                            innerRadius={80}
+                            outerRadius={180} 
+                            label={false}
+                          >
+                            {sortedData.map((entry, idx) => (
+                              <Cell key={`status-${idx}`} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value, name, props) => [
+                              `${value} orders`, 
+                              `${props.payload.status}: ${((value / totalCount) * 100).toFixed(1)}%`
+                            ]} 
+                          />
+                          <Legend 
+                            verticalAlign="bottom"
+                            height={50}
+                            formatter={(value, entry, index) => {
+                              const item = sortedData[index];
+                              const percent = totalCount > 0 ? ((item.count / totalCount) * 100).toFixed(1) : '0';
+                              return `${value} (${item.count}, ${percent}%)`;
+                            }}
+                            wrapperStyle={{ fontSize: '14px', paddingTop: '20px' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
+                );
+              })()}
+
+              {expandedChart === 'stock-movement' && stock_movement && stock_movement.length > 0 && (
+                <>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-6">Stock Movement (Last 30 Days)</h3>
+                  <div className="h-[600px]">
+                    <ResponsiveContainer width="100%" height={600}>
+                      <BarChart data={stock_movement} layout="vertical" margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" />
+                        <YAxis 
+                          dataKey="name" 
+                          type="category" 
+                          width={180}
+                          tick={{ fontSize: 11 }}
+                          angle={0}
+                          textAnchor="end"
+                          interval={0}
+                        />
+                        <Tooltip 
+                          contentStyle={{ fontSize: '14px' }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 14 }} />
+                        <Bar dataKey="sold_last_30_days" fill="#22D3EE" name="Sold (30d)" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              )}
+
+              {expandedChart === 'sales-overview' && salesChartData && salesChartData.length > 0 && (
+                <>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-6">Sales Overview - {salesChartTitle}</h3>
+                  <div className="h-[600px]">
+                    {salesChartType === 'monthly' && (
+                      <ResponsiveContainer width="100%" height={600}>
+                        <LineChart data={monthly_sales} margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="month" label={{ value: 'Month', position: 'insideBottomRight', offset: 0 }} />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="total_sales" stroke="#6366F1" strokeWidth={3} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                    {salesChartType === 'weekly' && (
+                      <ResponsiveContainer width="100%" height={600}>
+                        <LineChart data={weekly_sales} margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="week" label={{ value: 'Week', position: 'insideBottomRight', offset: 0 }} />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="total_sales" stroke="#22D3EE" strokeWidth={3} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                    {salesChartType === 'daily' && (
+                      <ResponsiveContainer width="100%" height={600}>
+                        <BarChart data={daily_sales} margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="day" label={{ value: 'Day', position: 'insideBottomRight', offset: 0 }} />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="total_sales" fill="#F59E42" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

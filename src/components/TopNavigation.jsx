@@ -1,10 +1,12 @@
-import React, { useState } from 'react'
-import { Home, Settings, Monitor, Bell, Cpu, BarChart3, Users, Package, Wrench, FileText, TrendingUp, Menu, X, User, LogOut, ChevronDown, MessageSquare } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Home, Settings, Monitor, Bell, Cpu, BarChart3, Users, Package, Wrench, FileText, TrendingUp, Menu, X, User, LogOut, ChevronDown, MessageSquare, ShoppingCart } from 'lucide-react'
 import { useNotifications } from '../contexts/NotificationContext'
+import { API_BASE } from '../utils/apiBase'
 
 const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabChange, activeSuperAdminTab }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+  const [cartCount, setCartCount] = useState(0)
 
   // Safely get unread count with fallback
   let unreadCount = 0
@@ -14,6 +16,53 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
   } catch (error) {
     unreadCount = 0
   }
+
+  // Fetch cart count
+  useEffect(() => {
+    const fetchCartCount = async () => {
+      if (!user) {
+        setCartCount(0);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setCartCount(0);
+          return;
+        }
+
+        const res = await fetch(`${API_BASE}/index.php?endpoint=cart&count`, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) {
+            setCartCount(data.total_items || 0);
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching cart count:', e);
+      }
+    };
+
+    fetchCartCount();
+    // Refresh cart count every 30 seconds
+    const interval = setInterval(fetchCartCount, 30000);
+    
+    // Also refresh when navigating away from cart page (to reflect changes)
+    if (currentPage === 'cart') {
+      const timeout = setTimeout(fetchCartCount, 500);
+      return () => {
+        clearInterval(interval);
+        clearTimeout(timeout);
+      };
+    }
+    
+    return () => clearInterval(interval);
+  }, [user, currentPage]);
 
   const handleLogout = (e) => {
     try { e && e.preventDefault && e.preventDefault(); } catch {}
@@ -30,15 +79,32 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
 
   const getUserRoleDisplay = () => {
     if (!user?.roles) return 'User';
-    return user.roles.join(', ');
+    
+    // Handle both string and array formats
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    // Remove duplicates and join
+    const uniqueRoles = [...new Set(roleArray)];
+    return uniqueRoles.join(', ');
   };
 
   const getRoleColor = () => {
     if (!user?.roles) return 'bg-gray-500';
     
-    if (user.roles.includes('Super Admin')) return 'bg-red-500';
-    if (user.roles.includes('Admin')) return 'bg-purple-500';
-    if (user.roles.includes('Employee')) return 'bg-blue-500';
+    // Use the same robust role extraction logic
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    if (roleArray.includes('Super Admin')) return 'bg-red-500';
+    if (roleArray.includes('Admin')) return 'bg-purple-500';
+    if (roleArray.includes('Employee')) return 'bg-blue-500';
     return 'bg-green-500';
   };
 
@@ -56,22 +122,21 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
   ]
 
   const userMenuItems = user ? [
-    ...(user.roles?.includes('Client') ? [
+    // Show dashboard link for Admin/Employee/Super Admin users
+    ...(roles.includes('Super Admin') ? [
+      { id: 'super-admin-dashboard', name: 'Super Admin Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
+    ] : roles.includes('Admin') && !roles.includes('Super Admin') ? [
+      { id: 'admin-dashboard', name: 'Admin Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
+    ] : roles.includes('Employee') && !roles.includes('Admin') && !roles.includes('Super Admin') ? [
+      { id: 'employee-dashboard', name: 'Employee Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
+    ] : []),
+    // Only show menu items for Client users - Admin/Employee/Super Admin use sidebar navigation
+    ...(roles.includes('Client') && !roles.includes('Admin') && !roles.includes('Employee') && !roles.includes('Super Admin') ? [
       { id: 'my-builds', name: 'My Builds', icon: <Package className="w-4 h-4" /> },
+      { id: 'cart', name: 'Shopping Cart', icon: <ShoppingCart className="w-4 h-4" />, badge: cartCount },
       { id: 'my-orders', name: 'My Orders', icon: <FileText className="w-4 h-4" /> },
       { id: 'pc-assembly', name: 'PC Assembly', icon: <Cpu className="w-4 h-4" /> },
       { id: 'notifications', name: 'Notifications', icon: <Bell className="w-4 h-4" />, badge: unreadCount },
-    ] : []),
-    ...(roles.includes('Admin') ? [
-      { id: 'admin-dashboard', name: 'Admin Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
-      { id: 'chat-support', name: 'Chat Support', icon: <MessageSquare className="w-4 h-4" /> },
-    ] : []),
-    ...(roles.includes('Super Admin') ? [
-      { id: 'super-admin-dashboard', name: 'Super Admin Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
-    ] : []),
-    ...(roles.includes('Employee') ? [
-      { id: 'employee-dashboard', name: 'Employee Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
-      { id: 'chat-support', name: 'Chat Support', icon: <MessageSquare className="w-4 h-4" /> },
     ] : []),
   ] : []
 
@@ -124,6 +189,22 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
 
           {/* Right side - User menu or Auth buttons */}
           <div className="flex items-center space-x-4">
+            {/* Cart for logged in users (Client only) */}
+            {user && roles.includes('Client') && !roles.includes('Admin') && !roles.includes('Employee') && !roles.includes('Super Admin') && (
+              <button
+                onClick={() => onPageChange('cart')}
+                className="relative p-2 text-gray-700 hover:text-green-600 transition-colors"
+                title="Shopping Cart"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                {cartCount > 0 && (
+                  <span className="absolute -top-1 -right-1 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-green-500 text-white min-w-[1.25rem]">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+            )}
+            
             {/* Notifications for logged in users */}
             {user && (
               <button
@@ -180,26 +261,34 @@ const TopNavigation = ({ currentPage, onPageChange, user, onLogout, onSuperAdmin
                     </div>
 
                     {/* Menu items */}
-                    {userMenuItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          onPageChange(item.id)
-                          setIsUserMenuOpen(false)
-                        }}
-                        className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <div className="flex items-center space-x-2">
-                          {item.icon}
-                          <span>{item.name}</span>
-                        </div>
-                        {item.badge && item.badge > 0 && (
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white">
-                            {item.badge}
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                    {userMenuItems.length > 0 && (
+                      <>
+                        {userMenuItems.map((item) => (
+                          <button
+                            key={item.id}
+                            onClick={() => {
+                              onPageChange(item.id)
+                              setIsUserMenuOpen(false)
+                            }}
+                            className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          >
+                            <div className="flex items-center space-x-2">
+                              {item.icon}
+                              <span>{item.name}</span>
+                            </div>
+                            {item.badge && item.badge > 0 && (
+                              <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold text-white ${
+                                item.id === 'cart' ? 'bg-green-500' : 'bg-red-500'
+                              }`}>
+                                {item.badge}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                        {/* Separator before logout if there are menu items */}
+                        <div className="border-t border-gray-200 my-1"></div>
+                      </>
+                    )}
 
                     {/* Logout */}
                     <button

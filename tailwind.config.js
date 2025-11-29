@@ -19,6 +19,18 @@ module.exports = {
           800: '#166534',
           900: '#14532d',
         },
+        // Custom green palette from design guide
+        'green-custom': {
+          100: '#cce7c9', // Lightest
+          200: '#acd8a7',
+          300: '#8bca84',
+          400: '#72bf6a',
+          500: '#5bb450',
+          600: '#52a447',
+          700: '#46923c',
+          800: '#3b8132',
+          900: '#276221', // Darkest
+        },
         secondary: {
           50: '#f8fafc',
           100: '#f1f5f9',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { API_BASE } from '../utils/apiBase'
+import { API_BASE, getApiEndpoint } from '../utils/apiBase'
 import { Search, Filter, Eye, Plus, CheckCircle, AlertTriangle, ArrowRight, Package } from 'lucide-react'
 import { getComponentImage } from '../utils/componentImages'
 import { formatCurrencyPHP } from '../utils/currency';
@@ -62,7 +62,7 @@ const ComponentSelector = ({
     
     try {
       const dbCategory = categoryMapping[activeCategory]
-      const url = `${API_BASE}/index.php?endpoint=components&category=${encodeURIComponent(dbCategory)}`
+      const url = getApiEndpoint('components', { category: dbCategory });
       
       const response = await fetch(url)
       const data = await response.json()
@@ -389,29 +389,7 @@ const ComponentSelector = ({
                   <p className="text-sm text-gray-600 mb-2">{component.brand}</p>
                   <div className="flex items-center justify-between">
                     <span className="text-2xl font-bold text-green-600">{formatCurrencyPHP(component.price)}</span>
-                    <span className="text-sm text-gray-500">Stock: {component.stock_quantity}</span>
                   </div>
-                </div>
-
-                {/* Component Specs */}
-                <div className="text-xs text-gray-600 space-y-1">
-                  {/* Warranty (top-level or in specs) */}
-                  {(component.warranty || (component.specs && component.specs.warranty)) && (
-                    <div>Warranty: {component.warranty || component.specs.warranty}</div>
-                  )}
-                  {component.socket && <div>Socket: {component.socket}</div>}
-                  {component.cores && <div>Cores: {component.cores}</div>}
-                  {component.threads && <div>Threads: {component.threads}</div>}
-                  {component.tdp && <div>TDP: {component.tdp}W</div>}
-                  {component.ram_type && <div>RAM Type: {component.ram_type}</div>}
-                  {component.form_factor && <div>Form Factor: {component.form_factor}</div>}
-                  {component.memory && <div>Memory: {component.memory}</div>}
-                  {component.speed && <div>Speed: {component.speed}</div>}
-                  {component.capacity && <div>Capacity: {component.capacity}</div>}
-                  {component.wattage && <div>Wattage: {component.wattage}W</div>}
-                  {component.efficiency && <div>Efficiency: {component.efficiency}</div>}
-                  {component.fans && <div>Fans: {component.fans}</div>}
-                  {component.type && <div>Type: {component.type}</div>}
                 </div>
 
                 <div className="flex gap-2 pt-2">

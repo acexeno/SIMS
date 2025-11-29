@@ -21,15 +21,32 @@ const Sidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabCha
 
   const getUserRoleDisplay = () => {
     if (!user?.roles) return 'User';
-    return user.roles.join(', ');
+    
+    // Handle both string and array formats
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    // Remove duplicates and join
+    const uniqueRoles = [...new Set(roleArray)];
+    return uniqueRoles.join(', ');
   };
 
   const getRoleColor = () => {
     if (!user?.roles) return 'bg-gray-500';
     
-    if (user.roles.includes('Super Admin')) return 'bg-red-500';
-    if (user.roles.includes('Admin')) return 'bg-purple-500';
-    if (user.roles.includes('Employee')) return 'bg-blue-500';
+    // Use the same robust role extraction logic
+    const roleArray = Array.isArray(user.roles)
+      ? user.roles
+      : typeof user.roles === 'string'
+        ? user.roles.split(',').map(r => r.trim()).filter(r => r.length > 0)
+        : [];
+    
+    if (roleArray.includes('Super Admin')) return 'bg-green-500';
+    if (roleArray.includes('Admin')) return 'bg-green-500';
+    if (roleArray.includes('Employee')) return 'bg-green-500';
     return 'bg-green-500';
   };
 
@@ -113,20 +130,39 @@ const Sidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabCha
           Home
         </button>
 
-        {/* Prebuilt PCs for all users */}
-        <button
-          onClick={() => onPageChange('prebuilt-pcs')}
-          className={`w-full flex items-center px-5 py-2 text-sm font-medium rounded-md transition-colors truncate ${
-            currentPage === 'prebuilt-pcs'
-              ? 'bg-green-100 text-green-700'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-          }`}
-        >
-          <svg className="mr-3 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-          </svg>
-          Prebuilt PCs
-        </button>
+        {/* Prebuilt PCs & Community for all authenticated users */}
+        {user && (
+          <button
+            onClick={() => onPageChange('prebuilt-pcs')}
+            className={`w-full flex items-center px-5 py-2 text-sm font-medium rounded-md transition-colors truncate ${
+              currentPage === 'prebuilt-pcs'
+                ? 'bg-green-100 text-green-700'
+                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+            }`}
+          >
+            <svg className="mr-3 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            Prebuilt PCs & PC Build Sharing
+          </button>
+        )}
+
+        {/* Prebuilt PCs for non-authenticated users */}
+        {!user && (
+          <button
+            onClick={() => onPageChange('prebuilt-pcs')}
+            className={`w-full flex items-center px-5 py-2 text-sm font-medium rounded-md transition-colors truncate ${
+              currentPage === 'prebuilt-pcs'
+                ? 'bg-green-100 text-green-700'
+                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+            }`}
+          >
+            <svg className="mr-3 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            Prebuilt PCs
+          </button>
+        )}
 
         {/* Public menu items for non-logged-in users */}
         {!user && (
@@ -177,19 +213,6 @@ const Sidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabCha
               My Builds
             </button>
 
-            <button
-              onClick={() => onPageChange('prebuilt-pcs')}
-              className={`w-full flex items-center px-5 py-2 text-sm font-medium rounded-md transition-colors truncate ${
-                currentPage === 'prebuilt-pcs'
-                  ? 'bg-green-100 text-green-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
-            >
-              <svg className="mr-3 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
-              Prebuilt PCs & Community
-            </button>
 
             <button
               onClick={() => onPageChange('my-orders')}
@@ -248,7 +271,7 @@ const Sidebar = ({ currentPage, onPageChange, user, onLogout, onSuperAdminTabCha
               <Bell className="mr-3 h-5 w-5" />
               Notifications
               {unreadCount > 0 && (
-                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white">{unreadCount}</span>
+                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-500 text-white">{unreadCount}</span>
               )}
             </button>
           </>

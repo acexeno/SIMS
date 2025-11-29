@@ -2,6 +2,9 @@
 // Security configuration and helper functions
 // This file should be included in all API endpoints
 
+// Include security configuration
+require_once __DIR__ . '/security_config.php';
+
 // Security headers
 function setSecurityHeaders() {
     // Prevent clickjacking
@@ -16,13 +19,16 @@ function setSecurityHeaders() {
     // Referrer policy
     header('Referrer-Policy: strict-origin-when-cross-origin');
     
-    // Content Security Policy
+    // Content Security Policy (Note: This is overridden by security_config.php, but kept for backwards compatibility)
+    // Allow Google reCAPTCHA domains
+    $recaptchaDomains = "https://www.google.com https://www.gstatic.com";
     $csp = "default-src 'self'; " .
-           "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " .
+           "script-src 'self' 'unsafe-inline' 'unsafe-eval' {$recaptchaDomains}; " .
            "style-src 'self' 'unsafe-inline'; " .
-           "img-src 'self' data: https:; " .
+           "img-src 'self' data: https: {$recaptchaDomains}; " .
            "font-src 'self' data:; " .
-           "connect-src 'self'; " .
+           "connect-src 'self' {$recaptchaDomains}; " .
+           "frame-src {$recaptchaDomains}; " .
            "frame-ancestors 'none';";
     header("Content-Security-Policy: $csp");
     
@@ -82,23 +88,30 @@ function sanitizeInput($input, $type = 'string') {
 function validatePasswordStrength($password) {
     $errors = [];
     
-    if (strlen($password) < 8) {
-        $errors[] = 'Password must be at least 8 characters long';
+    // Get password requirements from security configuration
+    $requirements = getPasswordRequirements();
+    
+    if (strlen($password) < $requirements['min_length']) {
+        $errors[] = "Password must be at least {$requirements['min_length']} characters long";
     }
     
-    if (!preg_match('/[A-Z]/', $password)) {
+    if (isset($requirements['max_length']) && strlen($password) > $requirements['max_length']) {
+        $errors[] = "Password must be no more than {$requirements['max_length']} characters long";
+    }
+    
+    if ($requirements['require_uppercase'] && !preg_match('/[A-Z]/', $password)) {
         $errors[] = 'Password must contain at least one uppercase letter';
     }
     
-    if (!preg_match('/[a-z]/', $password)) {
+    if ($requirements['require_lowercase'] && !preg_match('/[a-z]/', $password)) {
         $errors[] = 'Password must contain at least one lowercase letter';
     }
     
-    if (!preg_match('/[0-9]/', $password)) {
+    if ($requirements['require_numbers'] && !preg_match('/[0-9]/', $password)) {
         $errors[] = 'Password must contain at least one number';
     }
     
-    if (!preg_match('/[^A-Za-z0-9]/', $password)) {
+    if ($requirements['require_special'] && !preg_match('/[^A-Za-z0-9]/', $password)) {
         $errors[] = 'Password must contain at least one special character';
     }
     
@@ -128,6 +141,71 @@ function verifyCSRFToken($token) {
 // Secure random string generation
 function generateSecureToken($length = 32) {
     return bin2hex(random_bytes($length));
+}
+
+// Generate secure password that meets requirements
+function generateSecurePassword($requirements = null) {
+    if ($requirements === null) {
+        $requirements = getPasswordRequirements();
+    }
+    
+    $minLength = $requirements['min_length'] ?? 8;
+    $maxLength = $requirements['max_length'] ?? null;
+    $requireUppercase = $requirements['require_uppercase'] ?? true;
+    $requireLowercase = $requirements['require_lowercase'] ?? true;
+    $requireNumbers = $requirements['require_numbers'] ?? true;
+    $requireSpecial = $requirements['require_special'] ?? true;
+    
+    // Character sets
+    $uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // Exclude I and O to avoid confusion
+    $lowercase = 'abcdefghijkmnopqrstuvwxyz'; // Exclude l to avoid confusion
+    $numbers = '23456789'; // Exclude 0 and 1 to avoid confusion
+    $special = '!@#$%^&*';
+    
+    // Determine password length
+    // If max_length is set, use it; otherwise generate a secure default (12-16 chars)
+    if ($maxLength !== null && $maxLength > 0) {
+        $length = $maxLength;
+    } else {
+        // Generate a random length between min_length+4 and max(min_length+8, 16)
+        // This ensures strong passwords while allowing variation
+        $targetLength = max($minLength + 4, min($minLength + 8, 16));
+        $length = random_int($targetLength - 2, $targetLength + 2);
+    }
+    
+    $password = '';
+    $allChars = '';
+    
+    // Ensure at least one character from each required set
+    if ($requireUppercase) {
+        $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+        $allChars .= $uppercase;
+    }
+    if ($requireLowercase) {
+        $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+        $allChars .= $lowercase;
+    }
+    if ($requireNumbers) {
+        $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+        $allChars .= $numbers;
+    }
+    if ($requireSpecial) {
+        $password .= $special[random_int(0, strlen($special) - 1)];
+        $allChars .= $special;
+    }
+    
+    // Fill the rest with random characters
+    $remainingLength = $length - strlen($password);
+    for ($i = 0; $i < $remainingLength; $i++) {
+        $password .= $allChars[random_int(0, strlen($allChars) - 1)];
+    }
+    
+    // Shuffle the password to avoid predictable patterns
+    $passwordArray = str_split($password);
+    shuffle($passwordArray);
+    $password = implode('', $passwordArray);
+    
+    return $password;
 }
 
 // Log security events

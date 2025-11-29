@@ -14,22 +14,31 @@ const DynamicChatAccess = ({ user, fullScreen = false, customStyles = {}, hideHe
     const checkPermissions = async () => {
       try {
         const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         
         // Check chat permissions
         const permRes = await fetch(`${API_BASE}/chat.php?check_permissions`, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${token}`
           }
         });
+        
+        if (!permRes.ok) {
+          throw new Error(`HTTP error! status: ${permRes.status}`);
+        }
+        
         const permData = await permRes.json();
         
         if (permData.success) {
           setPermissions(permData);
+        } else {
+          // If permissions check returns but not successful, still set it to avoid infinite loading
+          setPermissions({ hasPermission: false, canRead: false, canWrite: false });
         }
         
       } catch (err) {
         console.error('Error checking permissions:', err);
+        // Set permissions to deny access on error to prevent white screen
+        setPermissions({ hasPermission: false, canRead: false, canWrite: false });
         setError('Failed to load chat support');
       } finally {
         setLoading(false);
@@ -63,8 +72,8 @@ const DynamicChatAccess = ({ user, fullScreen = false, customStyles = {}, hideHe
 
   // Determine chat interface based on user role and permissions
   const getChatInterface = () => {
-    // Admin/Employee interface - can view and manage all chats
-    if (permissions?.canRead && (user?.roles?.includes('Admin') || user?.roles?.includes('Employee') || user?.roles?.includes('Super Admin'))) {
+    // Super Admin/Admin/Employee interface - can view and manage all chats
+    if (permissions?.canRead && (user?.roles?.includes('Super Admin') || user?.roles?.includes('Admin') || user?.roles?.includes('Employee'))) {
       return (
         <div className={fullScreen ? 'h-screen' : 'h-full'}>
           <AdminChatSupport user={user} />
@@ -84,19 +93,60 @@ const DynamicChatAccess = ({ user, fullScreen = false, customStyles = {}, hideHe
     );
   };
 
-  // Show access denied for users without permissions
-  if (permissions && !permissions.hasPermission && user && (user.roles?.includes('Admin') || user.roles?.includes('Employee'))) {
+  // Show access denied for users without permissions (Super Admin always has access)
+  if (permissions && !permissions.hasPermission && user && !user.roles?.includes('Super Admin') && (user.roles?.includes('Admin') || user.roles?.includes('Employee'))) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">Access Restricted</h3>
-          <p className="text-gray-600 mb-4">
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center max-w-md mx-auto p-8">
+          <Shield className="w-16 h-16 text-red-500 mx-auto mb-6" />
+          <h3 className="text-2xl font-semibold text-gray-800 mb-4">Access Restricted</h3>
+          <p className="text-gray-600 mb-6 text-lg">
             You don't have permission to access chat support management.
           </p>
-          <p className="text-sm text-gray-500">
-            Contact your administrator for assistance.
+          <p className="text-sm text-gray-500 mb-6">
+            Your access to this feature has been disabled by a Super Admin.
           </p>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <p className="text-yellow-800 text-sm">
+              <strong>Need access?</strong> Contact your Super Administrator to enable chat support permissions for your account.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show access denied if permissions failed to load and user is Admin/Employee
+  if (!loading && !permissions && user && (user.roles?.includes('Admin') || user.roles?.includes('Employee'))) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center max-w-md mx-auto p-8">
+          <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto mb-6" />
+          <h3 className="text-2xl font-semibold text-gray-800 mb-4">Unable to Load Chat Support</h3>
+          <p className="text-gray-600 mb-6 text-lg">
+            There was an error loading your chat support permissions.
+          </p>
+          <p className="text-sm text-gray-500 mb-6">
+            Please try refreshing the page or contact your administrator.
+          </p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors"
+          >
+            Refresh Page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Ensure we have something to render - fallback to regular chat if no permissions data
+  if (!loading && permissions === null) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center text-gray-600">
+          <AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+          <div>Loading chat support...</div>
         </div>
       </div>
     );

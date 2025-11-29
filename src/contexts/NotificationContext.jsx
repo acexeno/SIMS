@@ -35,48 +35,39 @@ export const NotificationProvider = ({ children, user }) => {
   }
 
   // Helper function to check if user has access to notifications
+  // All authenticated users should see their own notifications (not just admins)
+  // This allows Client users to see their PC Build Sharing Review notifications
   const hasNotificationAccess = (user) => {
-    if (!user || !user.roles) return false;
-    
-    // Handle both array and string roles
-    let roles = [];
-    if (Array.isArray(user.roles)) {
-      roles = user.roles;
-    } else if (typeof user.roles === 'string') {
-      roles = user.roles.split(',').map(role => role.trim());
-    } else {
-      roles = [user.roles];
-    }
-    
-    const hasAccess = roles.some(role => ['Admin', 'Super Admin', 'Employee'].includes(role));
-    
-    return hasAccess;
+    // Allow all authenticated users with a valid user ID to see their notifications
+    return !!(user && user.id);
   };
 
   // Load notifications when user changes
   useEffect(() => {
     if (user && user.id && hasNotificationAccess(user)) {
+      // Initial load
       loadNotifications()
       loadUnreadCount()
-      // Poll unread count every 10 seconds (reduced frequency to avoid auth issues)
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-      // Add initial delay to let authentication stabilize
-      setTimeout(() => {
-        pollRef.current = setInterval(() => {
-          loadUnreadCount()
-        }, 10000)
-      }, 2000)
+      
+      // Set up polling for real-time updates (reduced frequency to prevent blinking)
+      const notificationInterval = setInterval(() => {
+        loadNotifications()
+      }, 30000); // 30 seconds for notifications
+      
+      const unreadInterval = setInterval(() => {
+        loadUnreadCount()
+      }, 60000); // 60 seconds for unread count
+      
       return () => {
-        if (pollRef.current) {
-          clearInterval(pollRef.current)
-          pollRef.current = null
+        if (notificationInterval) {
+          clearInterval(notificationInterval)
+        }
+        if (unreadInterval) {
+          clearInterval(unreadInterval)
         }
       }
     } else {
-      // Clear notifications for users without access (like Client users)
+      // Clear notifications for users without access
       setNotifications([])
       setUnreadCount(0)
       if (pollRef.current) {
@@ -138,14 +129,24 @@ export const NotificationProvider = ({ children, user }) => {
           clearInterval(pollRef.current)
           pollRef.current = null
         }
+        setLoading(false)
         return
       }
 
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
+          // Filter out any invalid notifications (null, missing ID, or ID <= 0)
+          const validNotifications = (data.data || []).filter(notification => 
+            notification && 
+            notification.id && 
+            notification.id !== null && 
+            notification.id !== undefined && 
+            notification.id > 0
+          )
+          
           // Convert timestamp strings to Date objects
-          const notificationsWithDates = data.data.map(notification => ({
+          const notificationsWithDates = validNotifications.map(notification => ({
             ...notification,
             timestamp: new Date(notification.timestamp)
           }))
@@ -180,10 +181,8 @@ export const NotificationProvider = ({ children, user }) => {
       })
       
       if (response.status === 401) {
-        // 401 error in loadUnreadCount, stopping polling
-        // Do not clear global token here. Just reset local state and stop polling.
-        setNotifications([])
-        setUnreadCount(0)
+        // 401 error in loadUnreadCount, stop polling but don't clear state
+        console.log('NotificationContext: 401 error, stopping polling')
         if (pollRef.current) {
           clearInterval(pollRef.current)
           pollRef.current = null
@@ -275,6 +274,13 @@ export const NotificationProvider = ({ children, user }) => {
 
   const deleteNotification = async (notificationId) => {
     if (!user || !user.id || !hasNotificationAccess(user)) return
+    
+    // Validate notification ID before sending
+    if (!notificationId || notificationId === null || notificationId === undefined || notificationId === 0) {
+      console.error('Invalid notification ID:', notificationId)
+      return
+    }
+    
     try {
       const token = await ensureValidToken(false)
       if (!token) return
@@ -282,7 +288,7 @@ export const NotificationProvider = ({ children, user }) => {
       const response = await authorizedFetch(`${API_BASE}/index.php?endpoint=notifications`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notification_id: notificationId }),
+        body: JSON.stringify({ notification_id: Number(notificationId) }),
         suppressUnauthorizedEvent: true
       })
       
@@ -296,7 +302,7 @@ export const NotificationProvider = ({ children, user }) => {
         if (data.success) {
           const notification = notifications.find(n => n.id === notificationId)
           setNotifications(prev => 
-            prev.filter(notification => notification.id !== notificationId)
+            prev.filter(notification => notification && notification.id && notification.id !== notificationId)
           )
           // Update unread count if the deleted notification was unread
           if (notification && !notification.read) {
@@ -304,7 +310,13 @@ export const NotificationProvider = ({ children, user }) => {
           }
           // Immediately sync with backend
           loadUnreadCount()
+        } else {
+          console.error('Failed to delete notification:', data.error || 'Unknown error')
         }
+      } else {
+        // Handle non-ok responses
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        console.error('Error deleting notification:', response.status, errorData)
       }
     } catch (error) {
       console.error('Error deleting notification:', error)

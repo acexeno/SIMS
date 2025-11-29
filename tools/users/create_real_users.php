@@ -53,17 +53,26 @@ try {
         // Hash password
         $passwordHash = password_hash($user['password'], PASSWORD_DEFAULT);
 
-        // Insert user
+        // Determine permissions: Admin and Employee should have all permissions enabled
+        $isAdminOrEmployee = in_array($user['role'], ['Admin', 'Employee']);
+        $canAccessInventory = $isAdminOrEmployee ? 1 : 0;
+        $canAccessOrders = $isAdminOrEmployee ? 1 : 0;
+        $canAccessChat = $isAdminOrEmployee ? 1 : 0;
+
+        // Insert user with proper permissions
         $stmt = $pdo->prepare("
-            INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, 1, NOW())
+            INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, can_access_inventory, can_access_orders, can_access_chat_support, created_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, NOW())
         ");
         $stmt->execute([
             $user['username'],
             $user['email'],
             $passwordHash,
             $user['first_name'],
-            $user['last_name']
+            $user['last_name'],
+            $canAccessInventory,
+            $canAccessOrders,
+            $canAccessChat
         ]);
         $userId = $pdo->lastInsertId();
 
@@ -83,6 +92,14 @@ try {
         // Assign role
         $stmt = $pdo->prepare("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)");
         $stmt->execute([$userId, $roleId]);
+        
+        // Also update the role column in users table for consistency
+        try {
+            $stmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+            $stmt->execute([$user['role'], $userId]);
+        } catch (Exception $e) {
+            echo "Warning: Could not update users.role column: " . $e->getMessage() . "\n";
+        }
 
         echo "Created user: {$user['username']} with role: {$user['role']}\n";
         echo "  Username: {$user['username']}\n";

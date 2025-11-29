@@ -111,6 +111,7 @@ async function doRefresh() {
       if (typeof window !== 'undefined' && window.dispatchEvent) {
         window.dispatchEvent(new CustomEvent('auth:login-required'))
       }
+      return null
     }
   } catch (error) {
     console.error('Token refresh error:', error)
@@ -233,8 +234,16 @@ export const authorizedFetch = async (url, options = {}, retry = true) => {
       if (typeof u === 'string' && u.includes('endpoint=refresh')) {
         return u
       }
-      // Only append for our backend API calls (supports absolute and relative URLs)
-      if (typeof u === 'string' && (u.startsWith('/backend/api') || u.includes('/backend/api/'))) {
+      // Append token for:
+      // 1. API routes (/api or /backend/api)
+      // 2. Production index.php routes (/index.php?endpoint=...)
+      if (
+        typeof u === 'string' && (
+          u.startsWith('/api') || u.includes('/api/') ||
+          u.startsWith('/backend/api') || u.includes('/backend/api/') ||
+          u.includes('/index.php?endpoint=') || u.includes('index.php?endpoint=')
+        )
+      ) {
         // Remove any existing token parameter to avoid duplicates
         const sep = u.includes('?') ? '&' : '?'
         // Remove existing token parameter if present

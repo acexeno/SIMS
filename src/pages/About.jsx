@@ -27,7 +27,7 @@ const About = ({ setCurrentPage }) => {
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold text-gray-900 mb-6">About SIMS</h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            SIMS (Smart Inventory Management System) is a comprehensive PC building platform 
+            SIMS (System Inventory Management System) is a comprehensive PC building platform 
             designed to make computer assembly accessible, reliable, and enjoyable for everyone.
           </p>
         </div>

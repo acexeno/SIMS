@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatCurrencyPHP } from '../utils/currency';
-import { Package, ShoppingCart, Clock, CheckCircle, XCircle, Eye, Download, Calendar, Truck, AlertCircle, X, Plus } from 'lucide-react';
+import { Package, ShoppingCart, Clock, CheckCircle, XCircle, Eye, Calendar, Truck, AlertCircle, X, Plus, XOctagon, Trash2 } from 'lucide-react';
 import { API_BASE } from '../utils/apiBase';
 
 const MyOrders = ({ setCurrentPage }) => {
@@ -52,7 +52,7 @@ const MyOrders = ({ setCurrentPage }) => {
             status: (o.status || 'pending').toString().toLowerCase(),
             orderDate: o.order_date,
             totalAmount: Number(o.total ?? o.total_price ?? 0),
-            itemCount: o.item_count || 0,
+            itemCount: Number(o.item_count || 0),
             items: [],
             progress: (() => {
               const s = (o.status || '').toString().toLowerCase();
@@ -60,6 +60,7 @@ const MyOrders = ({ setCurrentPage }) => {
               if (s === 'processing') return 0.5;
               if (s === 'shipped') return 0.75;
               if (s === 'delivered') return 1;
+              if (s === 'completed') return 1;
               return 0;
             })()
           }));
@@ -87,6 +88,8 @@ const MyOrders = ({ setCurrentPage }) => {
         return { color: 'text-purple-600', bgColor: 'bg-purple-100', icon: <Truck className="w-4 h-4" /> };
       case 'delivered':
         return { color: 'text-green-600', bgColor: 'bg-green-100', icon: <CheckCircle className="w-4 h-4" /> };
+      case 'completed':
+        return { color: 'text-green-600', bgColor: 'bg-green-100', icon: <CheckCircle className="w-4 h-4" /> };
       case 'cancelled':
         return { color: 'text-red-600', bgColor: 'bg-red-100', icon: <XCircle className="w-4 h-4" /> };
       default:
@@ -104,6 +107,8 @@ const MyOrders = ({ setCurrentPage }) => {
         return 'Shipped';
       case 'delivered':
         return 'Delivered';
+      case 'completed':
+        return 'Completed';
       case 'cancelled':
         return 'Cancelled';
       default:
@@ -164,6 +169,7 @@ const MyOrders = ({ setCurrentPage }) => {
             if (s === 'processing') return 0.5;
             if (s === 'shipped') return 0.75;
             if (s === 'delivered') return 1;
+            if (s === 'completed') return 1;
             return 0;
           })()
         };
@@ -173,6 +179,90 @@ const MyOrders = ({ setCurrentPage }) => {
     } catch (e) {
       console.error('Error loading order details:', e);
     }
+  };
+
+  // Cancel an order
+  const cancelOrder = async (orderId) => {
+    if (!window.confirm('Are you sure you want to cancel this order?')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token || isTokenExpired(token)) {
+        alert('Please log in to cancel orders');
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}&action=cancel`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to cancel order');
+      }
+
+      // Update local state
+      setOrders(prev => prev.map(order => 
+        order.id === orderId 
+          ? { ...order, status: 'cancelled', progress: 0 }
+          : order
+      ));
+
+      alert('Order cancelled successfully.');
+    } catch (e) {
+      console.error('Error cancelling order:', e);
+      alert(`Failed to cancel order: ${e.message}`);
+    }
+  };
+
+  // Delete an order
+  const deleteOrder = async (orderId) => {
+    if (!window.confirm('Are you sure you want to delete this order? This action cannot be undone. Inventory will be restored if applicable.')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token || isTokenExpired(token)) {
+        alert('Please log in to delete orders');
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/index.php?endpoint=orders&id=${orderId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete order');
+      }
+
+      // Remove order from local state
+      setOrders(prev => prev.filter(order => order.id !== orderId));
+
+      // Close order details modal if it's open for this order
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setShowOrderDetails(false);
+        setSelectedOrder(null);
+      }
+
+      alert('Order deleted successfully.');
+    } catch (e) {
+      console.error('Error deleting order:', e);
+      alert(`Failed to delete order: ${e.message}`);
+    }
+  };
+
+  // Check if order can be cancelled
+  const canCancelOrder = (order) => {
+    const status = (order.status || '').toString().toLowerCase();
+    return status === 'pending' || status === 'processing';
   };
 
   const EmptyState = () => (
@@ -226,6 +316,7 @@ const MyOrders = ({ setCurrentPage }) => {
 
   const OrderCard = ({ order }) => {
     const status = getStatusColor(order.status);
+    const cancellable = canCancelOrder(order);
     
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
@@ -257,18 +348,6 @@ const MyOrders = ({ setCurrentPage }) => {
               </div>
             </div>
             
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => loadOrderDetails(order.id)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
-                title="View order details"
-              >
-                <Eye className="w-4 h-4" />
-              </button>
-              <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100" title="Download invoice">
-                <Download className="w-4 h-4" />
-              </button>
-            </div>
           </div>
           
           {/* Order Progress */}
@@ -309,12 +388,23 @@ const MyOrders = ({ setCurrentPage }) => {
               <Eye className="w-4 h-4" />
               View Details
             </button>
-            {order.status === 'delivered' && (
-              <button className="flex-1 border-2 border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
-                <Download className="w-4 h-4" />
-                Download Invoice
+            {cancellable && (
+              <button 
+                onClick={() => cancelOrder(order.id)}
+                className="bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <XOctagon className="w-4 h-4" />
+                Cancel Order
               </button>
             )}
+            <button 
+              onClick={() => deleteOrder(order.id)}
+              className="bg-gray-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-gray-700 transition-colors flex items-center justify-center gap-2"
+              title="Delete Order"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
           </div>
         </div>
       </div>
@@ -406,6 +496,21 @@ const MyOrders = ({ setCurrentPage }) => {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Footer with Delete Button */}
+          <div className="border-t p-6 flex justify-end gap-3">
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to delete this order? This action cannot be undone. Inventory will be restored if applicable.')) {
+                  deleteOrder(order.id);
+                }
+              }}
+              className="bg-gray-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-gray-700 transition-colors flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Order
+            </button>
           </div>
         </div>
       </div>

@@ -39,10 +39,11 @@ function getAllowedOrigins() {
     $allowedOrigins = env('CORS_ALLOWED_ORIGINS', '');
     
     if (empty($allowedOrigins)) {
-        // Default to localhost for development - include common ports
+        // Default origins for development and production
         return [
             'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5175', 'http://localhost:8080',
-            'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:5175', 'http://127.0.0.1:8080'
+            'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:5175', 'http://127.0.0.1:8080',
+            'https://egiesims.shop', 'http://egiesims.shop'
         ];
     }
     
@@ -64,8 +65,9 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS
         header("Access-Control-Allow-Origin: $origin");
         header('Access-Control-Allow-Credentials: true');
     } else {
-        // In development, allow localhost only
-        if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false) {
+        // Allow localhost, 127.0.0.1, and production domains
+        if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false || 
+            strpos($origin, 'egiesims.shop') !== false) {
             header("Access-Control-Allow-Origin: $origin");
             header('Access-Control-Allow-Credentials: true');
         } else {
@@ -92,8 +94,9 @@ if ($origin && isOriginAllowed($origin)) {
     header("Access-Control-Allow-Origin: $origin");
     header('Access-Control-Allow-Credentials: true');
 } else {
-    // In development, allow localhost only
-    if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false) {
+    // Allow localhost, 127.0.0.1, and production domains
+    if (strpos($origin, 'localhost') !== false || strpos($origin, '127.0.0.1') !== false || 
+        strpos($origin, 'egiesims.shop') !== false) {
         header("Access-Control-Allow-Origin: $origin");
         header('Access-Control-Allow-Credentials: true');
     } else {

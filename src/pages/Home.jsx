@@ -18,6 +18,39 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
   const [prebuiltPCs, setPrebuiltPCs] = useState([])
   const [loadingPrebuilts, setLoadingPrebuilts] = useState(true)
 
+  // Recalculate price from component_ids by fetching current component prices
+  const recalculatePrice = async (pc) => {
+    try {
+      const componentIds = pc.component_ids || pc.componentIds || {};
+      if (!componentIds || typeof componentIds !== 'object' || Object.keys(componentIds).length === 0) {
+        return pc.price || 0;
+      }
+      
+      const ids = Object.values(componentIds)
+        .map(v => typeof v === 'string' ? parseInt(v, 10) : v)
+        .filter(v => Number.isFinite(v) && v > 0);
+      
+      if (ids.length === 0) {
+        return pc.price || 0;
+      }
+      
+      const url = `${API_BASE}/get_components_by_ids.php?ids=${ids.join(',')}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.success && Array.isArray(data.data)) {
+        const total = data.data.reduce((sum, component) => {
+          const price = typeof component.price === 'number' ? component.price : parseFloat(component.price) || 0;
+          return sum + price;
+        }, 0);
+        return total > 0 ? total : pc.price || 0;
+      }
+    } catch (error) {
+      console.error('Error recalculating price:', error);
+    }
+    return pc.price || 0;
+  };
+
   // Fetch prebuilts from backend and normalize for display
   useEffect(() => {
     const fetchPrebuilts = async () => {
@@ -25,7 +58,14 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
         const response = await fetch(`${API_BASE}/prebuilts.php`)
         const data = await response.json()
         if (Array.isArray(data)) {
-          setPrebuiltPCs(data)
+          // Recalculate prices for all prebuilts
+          const prebuiltsWithRecalculatedPrices = await Promise.all(
+            data.map(async (pc) => {
+              const recalculatedPrice = await recalculatePrice(pc);
+              return { ...pc, price: recalculatedPrice };
+            })
+          );
+          setPrebuiltPCs(prebuiltsWithRecalculatedPrices);
         } else {
           setPrebuiltPCs([])
         }
@@ -355,7 +395,7 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                 <p>No prebuilt PC recommendations found. Please check back later or try a different search.</p>
               </div>
             ) : (
-              prebuiltPCs.map((pc) => (
+              prebuiltPCs.slice(0, 3).map((pc) => (
                 <div
                   key={pc.id}
                   onClick={() => handlePrebuiltSelect(pc)}
@@ -401,7 +441,8 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                       }
                     }
                     
-                    if (performance) {
+                    // Only render if performance exists AND has at least one non-zero value
+                    if (performance && (performance.gaming || performance.streaming)) {
                       return (
                         <div className="mb-4 space-y-2">
                           {performance.gaming && (
@@ -798,22 +839,6 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                     Prebuilt PCs
                   </button>
                 </li>
-                <li>
-                  <button 
-                    onClick={() => setCurrentPage('about')}
-                    className="text-gray-300 hover:text-white transition-colors"
-                  >
-                    About Us
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => setCurrentPage('contact')}
-                    className="text-gray-300 hover:text-white transition-colors"
-                  >
-                    Contact
-                  </button>
-                </li>
               </ul>
             </div>
 
@@ -827,22 +852,6 @@ const Home = ({ setCurrentPage, setSelectedComponents }) => {
                     className="text-gray-300 hover:text-white transition-colors"
                   >
                     FAQ
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => setCurrentPage('compatibility-guide')}
-                    className="text-gray-300 hover:text-white transition-colors"
-                  >
-                    Compatibility Guide
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => setCurrentPage('troubleshooting')}
-                    className="text-gray-300 hover:text-white transition-colors"
-                  >
-                    Troubleshooting
                   </button>
                 </li>
               </ul>

@@ -88,17 +88,27 @@ const AdminChatSupport = ({ user }) => {
   };
 
   // Fetch all chat sessions
-  const fetchChats = async () => {
-    setLoadingChats(true);
+  const fetchChats = async (skipLoadingState = false) => {
+    if (!skipLoadingState) setLoadingChats(true);
     try {
       const res = await fetch(`${CHAT_BASE}?sessions`, {
         headers: getAuthHeaders()
       });
       const data = await res.json();
       if (data.success) {
-        setChats(data.sessions || []);
-        if (data.sessions && data.sessions.length > 0 && !selectedChatId) {
-          setSelectedChatId(data.sessions[0].id);
+        const newChats = data.sessions || [];
+        // Only update state if chats actually changed to prevent unnecessary re-renders
+        setChats(prevChats => {
+          const prevJson = JSON.stringify(prevChats);
+          const newJson = JSON.stringify(newChats);
+          if (prevJson !== newJson) {
+            return newChats;
+          }
+          return prevChats; // Return previous to prevent re-render
+        });
+        // Only set selectedChatId if chats changed and we don't have one selected
+        if (newChats.length > 0 && !selectedChatId) {
+          setSelectedChatId(newChats[0].id);
         }
       } else if (data.error) {
         setError(data.error);
@@ -106,25 +116,34 @@ const AdminChatSupport = ({ user }) => {
     } catch (error) {
         setError('Failed to load chat sessions.');
     }
-        setLoadingChats(false);
+    if (!skipLoadingState) setLoadingChats(false);
   };
 
   // Fetch messages for selected chat
-  const fetchMessages = async () => {
+  const fetchMessages = async (skipLoadingState = false) => {
     if (!selectedChatId) return;
-    setLoadingMessages(true);
+    if (!skipLoadingState) setLoadingMessages(true);
     try {
       const res = await fetch(`${CHAT_BASE}?messages&session_id=${selectedChatId}`, {
         headers: getAuthHeaders()
       });
       const data = await res.json();
       if (data.success) {
-        setMessages(data.messages || []);
+        const newMessages = data.messages || [];
+        // Only update state if messages actually changed to prevent unnecessary re-renders
+        setMessages(prevMessages => {
+          const prevJson = JSON.stringify(prevMessages);
+          const newJson = JSON.stringify(newMessages);
+          if (prevJson !== newJson) {
+            return newMessages;
+          }
+          return prevMessages; // Return previous to prevent re-render
+        });
       }
     } catch (error) {
         setError('Failed to load messages.');
     }
-        setLoadingMessages(false);
+    if (!skipLoadingState) setLoadingMessages(false);
   };
 
   // Initial load
@@ -176,21 +195,20 @@ const AdminChatSupport = ({ user }) => {
     }
   }, [selectedChatId]);
 
-  // Auto-refresh chats every 10 seconds
+  // Auto-refresh chats every 15 seconds (increased to reduce blinking)
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchChats();
-    }, 10000);
+      fetchChats(true); // Skip loading state to prevent UI flicker
+    }, 15000);
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-refresh messages every 5 seconds
+  // Auto-refresh messages every 8 seconds (increased to reduce blinking)
   useEffect(() => {
+    if (!selectedChatId) return;
     const interval = setInterval(() => {
-      if (selectedChatId) {
-        fetchMessages();
-      }
-    }, 5000);
+      fetchMessages(true); // Skip loading state to prevent UI flicker
+    }, 8000);
     return () => clearInterval(interval);
   }, [selectedChatId]);
 
@@ -276,6 +294,13 @@ const AdminChatSupport = ({ user }) => {
 
   // Delete message
   const handleDeleteMessage = async (messageId) => {
+    // Validate message ID before proceeding
+    if (!messageId || messageId === null || messageId === undefined || messageId === 0) {
+      setError('Invalid message ID');
+      console.error('Cannot delete message: messageId is', messageId);
+      return;
+    }
+    
     if (!confirm('Are you sure you want to delete this message?')) return;
     
     try {
@@ -285,20 +310,30 @@ const AdminChatSupport = ({ user }) => {
         'Content-Type': 'application/json',
         ...getAuthHeaders()
       },
-      body: JSON.stringify({ message_id: messageId })
+      body: JSON.stringify({ message_id: Number(messageId) })
     });
       
       const data = await res.json();
       if (data.success) {
         fetchMessages();
+      } else {
+        setError(data.error || 'Failed to delete message.');
       }
     } catch (error) {
-      setError('Failed to delete message.');
+      setError('Failed to delete message: ' + error.message);
+      console.error('Delete message error:', error);
     }
   };
 
   // Delete chat session
   const handleDeleteSession = async (chatId) => {
+    // Validate chatId before proceeding
+    if (!chatId || chatId === 0 || chatId === '0') {
+      setError('Invalid chat session ID');
+      console.error('Cannot delete: chatId is', chatId);
+      return;
+    }
+    
     if (!confirm('Are you sure you want to delete this chat session? This action cannot be undone.')) return;
     
     try {
@@ -308,7 +343,7 @@ const AdminChatSupport = ({ user }) => {
           'Content-Type': 'application/json',
           ...getAuthHeaders()
         },
-        body: JSON.stringify({ session_id: chatId })
+        body: JSON.stringify({ session_id: parseInt(chatId, 10) })
       });
       
       const data = await res.json();
@@ -318,9 +353,13 @@ const AdminChatSupport = ({ user }) => {
           setMessages([]);
         }
         fetchChats();
+      } else {
+        setError(data.error || 'Failed to delete chat session.');
+        console.error('Delete session error:', data);
       }
     } catch (error) {
-      setError('Failed to delete chat session.');
+      setError('Failed to delete chat session: ' + error.message);
+      console.error('Delete session error:', error);
     }
   };
 
@@ -454,9 +493,9 @@ const AdminChatSupport = ({ user }) => {
                     </div>
                     
                     <div className="flex items-center gap-2 ml-3">
-                      {chat.unread_messages > 0 && (
+                      {Number(chat.unread_messages || 0) > 0 && (
                         <div className="bg-red-500 text-white text-xs px-2 py-1 rounded-full font-semibold min-w-[22px] text-center">
-                          {chat.unread_messages}
+                          {Number(chat.unread_messages)}
                         </div>
                       )}
                       
@@ -595,17 +634,19 @@ const AdminChatSupport = ({ user }) => {
                             : 'bg-white text-gray-800 border border-gray-200'
                         }`}>
                           {/* Delete button - visible on hover */}
-                          <button
-                            className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 text-white rounded-full p-1.5 hover:bg-red-600 z-10 shadow-lg"
-                            title="Delete message"
-                            onClick={() => handleDeleteMessage(msg.id)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          {(msg.id && msg.id > 0) ? (
+                            <button
+                              className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 text-white rounded-full p-1.5 hover:bg-red-600 z-10 shadow-lg"
+                              title="Delete message"
+                              onClick={() => handleDeleteMessage(msg.id)}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          ) : null}
                           
                           {/* Message content */}
                           <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-                            {msg.message}
+                            {msg.message || ''}
                           </div>
                           
                           {/* Message type indicator */}

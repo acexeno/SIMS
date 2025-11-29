@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { API_BASE } from '../utils/apiBase';
+import { getApiEndpoint } from '../utils/apiBase';
 import { formatCurrencyPHP } from '../utils/currency';
 import { getComponentImage } from '../utils/componentImages';
 
@@ -22,7 +22,7 @@ const HeroSlideshow = ({ setCurrentPage }) => {
   useEffect(() => {
     const fetchComponents = async () => {
       try {
-        const response = await fetch(`${API_BASE}/get_all_components.php`);
+        const response = await fetch(getApiEndpoint('get_all_components'));
         const result = await response.json();
         if (result.success && Array.isArray(result.data)) {
           // Only allow real PC component categories by category_id
@@ -197,22 +197,24 @@ const HeroSlideshow = ({ setCurrentPage }) => {
       <div className="relative h-full">
         {(() => {
           const component = currentComponent;
-          const gradient = component?.gradient || 'from-blue-700 to-gray-900';
+          const gradient = component?.gradient || 'from-green-custom-800 to-gray-900';
           const gradientColors = gradient.includes('from-') 
             ? gradient.replace('from-', '').replace('to-', '').split(' ').map((color, idx) => {
                 const colorMapRgb = {
-                  'blue-700': '29,78,216',
+                  'blue-700': '59,130,50', // Changed to green-custom-800 equivalent (#3b8132)
                   'gray-900': '17,24,39',
                   'purple-700': '124,58,237',
-                  'green-700': '21,128,61',
+                  'green-700': '59,130,50', // Using #3b8132 equivalent
+                  'green-custom-800': '59,130,50', // #3b8132
+                  'green-custom-900': '39,98,34', // #276221
                   'red-700': '185,28,28',
                   'indigo-700': '67,56,202'
                 };
-                const rgb = colorMapRgb[color] || '29,78,216';
+                const rgb = colorMapRgb[color] || '59,130,50'; // Default to green-custom-800
                 const alpha = idx === 0 ? 0.72 : 0.92; // slightly more opaque on the second color
                 return `rgba(${rgb},${alpha})`;
               })
-            : ['rgba(29,78,216,0.72)', 'rgba(17,24,39,0.92)'];
+            : ['rgba(59,130,50,0.72)', 'rgba(17,24,39,0.92)']; // Default green gradient using #3b8132
           const description = component?.description || (component?.brand ? `${component.brand} ${component.name}` : component?.name);
           const specs = Array.isArray(component?.specs) && component.specs.length > 0 ? component.specs : [];
           const originalPrice = component?.originalPrice || '';
@@ -304,9 +306,9 @@ const HeroSlideshow = ({ setCurrentPage }) => {
                           <div className="flex flex-col sm:flex-row gap-4">
                             <button 
                               onClick={() => setCurrentPage('pc-assembly')}
-                              className="flex-1 flex items-center justify-center px-6 py-3 border-2 border-transparent text-base font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-[1.02] transform"
+                              className="flex-1 flex items-center justify-center px-6 py-3 border-2 border-transparent text-base font-medium rounded-lg text-white bg-gradient-to-r from-green-custom-600 to-green-custom-700 hover:from-green-custom-700 hover:to-green-custom-800 transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-[1.02] transform"
                             >
-                              Add to Build
+                              Go to Build
                               <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
                             </button>
                             <button

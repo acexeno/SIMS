@@ -97,13 +97,30 @@ function handleCreateBuild($pdo) {
     }
     
     try {
+        // Check for duplicate build (same name and components for this user)
+        $componentsJson = json_encode($input['components']);
+        $stmt = $pdo->prepare("
+            SELECT id FROM user_builds 
+            WHERE user_id = ? AND name = ? AND components = ?
+        ");
+        $stmt->execute([$userId, $input['name'], $componentsJson]);
+        $existingBuild = $stmt->fetch();
+        
+        if ($existingBuild) {
+            http_response_code(409);
+            echo json_encode([
+                'error' => 'A build with this name and configuration already exists',
+                'build_id' => $existingBuild['id']
+            ]);
+            return;
+        }
+        
         // Insert build into database
         $stmt = $pdo->prepare("
             INSERT INTO user_builds (user_id, name, description, components, compatibility_score, total_price, is_public, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         ");
         
-        $componentsJson = json_encode($input['components']);
         // Allow users to set public flag, but it will be reviewed by admins
         $isPublic = isset($input['is_public']) ? (int)$input['is_public'] : 0;
         
@@ -319,7 +336,8 @@ function handleUpdateBuild($pdo) {
         
         echo json_encode([
             'success' => true,
-            'message' => 'Build updated successfully'
+            'message' => 'Build updated successfully',
+            'build_id' => (int)$buildId
         ]);
         
     } catch (Exception $e) {
@@ -333,7 +351,15 @@ function handleDeleteBuild($pdo) {
     $buildId = $_GET['id'] ?? null;
     if (!$buildId) {
         http_response_code(400);
-        echo json_encode(['error' => 'Build ID is required']);
+        echo json_encode(['success' => false, 'error' => 'Build ID is required']);
+        return;
+    }
+    
+    // Validate build ID is numeric
+    $buildId = (int)$buildId;
+    if ($buildId <= 0) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Invalid build ID']);
         return;
     }
     
@@ -341,18 +367,61 @@ function handleDeleteBuild($pdo) {
     $userId = getUserIdFromToken();
     if (!$userId) {
         http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized']);
+        echo json_encode(['success' => false, 'error' => 'Unauthorized']);
         return;
     }
     
     try {
-        // Delete the build (only if it belongs to the user)
-        $stmt = $pdo->prepare("DELETE FROM user_builds WHERE id = ? AND user_id = ?");
-        $result = $stmt->execute([$buildId, $userId]);
+        // First, verify the build exists and belongs to the user (unless admin)
+        $checkStmt = $pdo->prepare("SELECT id, user_id FROM user_builds WHERE id = ?");
+        $checkStmt->execute([$buildId]);
+        $build = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$build) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'Build not found']);
+            return;
+        }
+        
+        // Check if user is admin or super admin
+        $stmt = $pdo->prepare("
+            SELECT r.name 
+            FROM user_roles ur 
+            JOIN roles r ON ur.role_id = r.id 
+            WHERE ur.user_id = ? AND r.name IN ('Admin', 'Super Admin')
+        ");
+        $stmt->execute([$userId]);
+        $isAdmin = $stmt->fetch();
+        
+        // Check permission: admin can delete any, regular users can only delete their own
+        if (!$isAdmin && (int)$build['user_id'] !== (int)$userId) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'You do not have permission to delete this build']);
+            return;
+        }
+        
+        // Delete related community submissions first (if foreign key cascade doesn't exist)
+        try {
+            $deleteSubmissions = $pdo->prepare("DELETE FROM community_submissions WHERE build_id = ?");
+            $deleteSubmissions->execute([$buildId]);
+        } catch (Exception $e) {
+            // If table doesn't exist or has issues, continue with build deletion
+            error_log("Warning: Could not delete community submissions: " . $e->getMessage());
+        }
+        
+        // Delete the build
+        $stmt = $pdo->prepare("DELETE FROM user_builds WHERE id = ?");
+        $result = $stmt->execute([$buildId]);
+        
+        if (!$result) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Failed to delete build']);
+            return;
+        }
         
         if ($stmt->rowCount() === 0) {
             http_response_code(404);
-            echo json_encode(['error' => 'Build not found']);
+            echo json_encode(['success' => false, 'error' => 'Build not found or already deleted']);
             return;
         }
         
@@ -361,9 +430,14 @@ function handleDeleteBuild($pdo) {
             'message' => 'Build deleted successfully'
         ]);
         
+    } catch (PDOException $e) {
+        http_response_code(500);
+        error_log("Delete build error: " . $e->getMessage());
+        echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to delete build: ' . $e->getMessage()]);
+        error_log("Delete build error: " . $e->getMessage());
+        echo json_encode(['success' => false, 'error' => 'Failed to delete build: ' . $e->getMessage()]);
     }
 }
 
